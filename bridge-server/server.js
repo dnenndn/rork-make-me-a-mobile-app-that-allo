@@ -15,9 +15,10 @@
  *   - any "stop"-like input > 0 (name contains "stop" or ends in ".4") drops it
  *   - MW/AW/QW analogue addresses animate while the motor runs
  *
- * To drive a REAL PLC, replace the bodies of readTags() and writeTags()
- * with your protocol calls (e.g. Modbus TCP via the `modbus-serial` package,
- * or S7 via `nodes7`). Everything else stays as-is.
+ * To drive a REAL PLC, use the Python bridge in this folder instead —
+ *   python server.py --plc <plc-ip>
+ * which speaks Siemens S7 over PROFINET/Ethernet via Snap7. The HTTP contract
+ * is identical, so the app needs no changes.
  */
 
 const http = require('http');
