@@ -1,6 +1,7 @@
 package com.rork.plcpanelstudio.ui.editor
 
-import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -25,6 +26,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Flip
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -44,7 +46,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -56,12 +57,14 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -70,17 +73,20 @@ import com.rork.plcpanelstudio.data.ComponentKind
 import com.rork.plcpanelstudio.data.PanelComponent
 import com.rork.plcpanelstudio.ui.components.GridBackdrop
 import com.rork.plcpanelstudio.ui.components.HardwareFace
+import com.rork.plcpanelstudio.ui.components.HardwareUnit
 import com.rork.plcpanelstudio.ui.components.PartTile
 import com.rork.plcpanelstudio.ui.theme.Ink
-import com.rork.plcpanelstudio.ui.theme.Line
 import com.rork.plcpanelstudio.ui.theme.MonoFamily
 import com.rork.plcpanelstudio.ui.theme.NameplateStyle
 import com.rork.plcpanelstudio.ui.theme.SignalOrange
+import com.rork.plcpanelstudio.ui.theme.SignalTeal
 import com.rork.plcpanelstudio.ui.theme.Surface1
 import com.rork.plcpanelstudio.ui.theme.Surface2
 import com.rork.plcpanelstudio.ui.theme.TextLow
 import com.rork.plcpanelstudio.ui.theme.TextMid
-import kotlin.math.floor
+import kotlinx.coroutines.delay
+import kotlin.math.hypot
+import kotlin.math.roundToInt
 
 private val PALETTE_KINDS = listOf(
     ComponentKind.BUTTON,
@@ -94,6 +100,14 @@ private sealed interface DragPayload {
     data class NewPart(val kind: ComponentKind) : DragPayload
     data class Existing(val component: PanelComponent) : DragPayload
 }
+
+/** Footprint of a part on the editor canvas, used to map finger position to 0..1 coordinates. */
+private val CANVAS_PART_WIDTH = 84.dp
+private val CANVAS_PART_HEIGHT = 116.dp
+
+/** Footprint used in the flipped preview and on the monitor screen. */
+private val PREVIEW_PART_WIDTH = 104.dp
+private val PREVIEW_PART_HEIGHT = 160.dp
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -109,6 +123,9 @@ fun EditorScreen(
     var showPanelSwitcher by remember { mutableStateOf(false) }
     var showProperties by remember { mutableStateOf(false) }
     var showPanelSettings by remember { mutableStateOf(false) }
+    var previewMode by remember { mutableStateOf(false) }
+    var showingPreview by remember { mutableStateOf(false) }
+    var justSaved by remember { mutableStateOf(false) }
 
     LaunchedEffect(panelId) { viewModel.load(panelId) }
 
@@ -119,24 +136,48 @@ fun EditorScreen(
         }
     }
 
-    val panel = state.panel
+    LaunchedEffect(justSaved) {
+        if (justSaved) {
+            delay(1600)
+            justSaved = false
+        }
+    }
 
+    // Card-flip animation: rotate to the midpoint, swap the content, rotate on.
+    // The preview side is counter-rotated so it reads correctly when settled.
+    val flip = remember { Animatable(0f) }
+    LaunchedEffect(previewMode) {
+        val target = if (previewMode) 1f else 0f
+        if (flip.value != target) {
+            flip.animateTo(0.5f, tween(150))
+            showingPreview = previewMode
+            flip.animateTo(target, tween(150))
+        }
+    }
+
+    val panel = state.panel
     val haptics = LocalHapticFeedback.current
+    val density = LocalDensity.current
 
     // Drag state shared between the rail and the canvas.
     var payload by remember { mutableStateOf<DragPayload?>(null) }
     var dragPosition by remember { mutableStateOf(Offset.Zero) }
     var canvasOrigin by remember { mutableStateOf(Offset.Zero) }
     var canvasSize by remember { mutableStateOf(Offset.Zero) }
-    var hoverCell by remember { mutableStateOf<Pair<Int, Int>?>(null) }
 
-    fun cellAt(position: Offset): Pair<Int, Int>? {
+    val canvasPartWpx = with(density) { CANVAS_PART_WIDTH.toPx() }
+    val canvasPartHpx = with(density) { CANVAS_PART_HEIGHT.toPx() }
+
+    /** Maps a finger position (root coords) to the snapped 0..1 center of a part. */
+    fun fractionAt(position: Offset): Pair<Float, Float>? {
         if (canvasSize.x <= 0f || canvasSize.y <= 0f) return null
         val local = position - canvasOrigin
         if (local.x < 0f || local.y < 0f || local.x > canvasSize.x || local.y > canvasSize.y) return null
-        val col = floor(local.x / (canvasSize.x / GRID_COLUMNS)).toInt().coerceIn(0, GRID_COLUMNS - 1)
-        val row = floor(local.y / (canvasSize.y / GRID_ROWS)).toInt().coerceIn(0, GRID_ROWS - 1)
-        return col to row
+        val spanX = (canvasSize.x - canvasPartWpx).coerceAtLeast(1f)
+        val spanY = (canvasSize.y - canvasPartHpx).coerceAtLeast(1f)
+        val x = ((local.x - canvasPartWpx / 2f) / spanX).coerceIn(0f, 1f)
+        val y = ((local.y - canvasPartHpx / 2f) / spanY).coerceIn(0f, 1f)
+        return snap(x) to snap(y)
     }
 
     Scaffold(
@@ -160,7 +201,11 @@ fun EditorScreen(
                             overflow = TextOverflow.Ellipsis
                         )
                         Text(
-                            text = state.device?.let { "${it.name} · ${it.endpoint}" } ?: "No device linked",
+                            text = if (previewMode) {
+                                "Preview — flip back to keep editing"
+                            } else {
+                                state.device?.let { "${it.name} · ${it.endpoint}" } ?: "No device linked"
+                            },
                             style = MaterialTheme.typography.bodySmall,
                             fontFamily = MonoFamily,
                             color = TextLow,
@@ -169,11 +214,23 @@ fun EditorScreen(
                     }
                 },
                 actions = {
+                    if (panel != null) {
+                        IconButton(onClick = { previewMode = !previewMode }) {
+                            Icon(
+                                Icons.Default.Flip,
+                                contentDescription = if (previewMode) "Flip back to editing" else "Flip to preview"
+                            )
+                        }
+                    }
                     TextButton(
-                        onClick = { viewModel.save() },
-                        enabled = panel != null
+                        onClick = { viewModel.save(); justSaved = true },
+                        enabled = panel != null && !justSaved
                     ) {
-                        Text("Save", color = SignalOrange, fontWeight = FontWeight.Bold)
+                        Text(
+                            text = if (justSaved) "Saved" else "Save",
+                            color = if (justSaved) SignalTeal else SignalOrange,
+                            fontWeight = FontWeight.Bold
+                        )
                     }
                     Box {
                         IconButton(onClick = { menuOpen = true }) {
@@ -218,95 +275,98 @@ fun EditorScreen(
                 .padding(top = inner.calculateTopPadding())
                 .padding(bottom = contentPadding.calculateBottomPadding())
         ) {
-            Row(modifier = Modifier.fillMaxSize()) {
-                PartRail(
-                    activeKind = (payload as? DragPayload.NewPart)?.kind,
-                    onDragStart = { kind, position ->
-                        payload = DragPayload.NewPart(kind)
-                        dragPosition = position
-                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                    },
-                    onDrag = { position ->
-                        dragPosition = position
-                        hoverCell = cellAt(position)
-                    },
-                    onDragEnd = {
-                        val target = hoverCell
-                        val current = payload
-                        if (target != null && current is DragPayload.NewPart) {
-                            viewModel.addComponent(current.kind, target.first, target.second)
-                            showProperties = true
-                        }
-                        payload = null
-                        hoverCell = null
-                    },
-                    onQuickAdd = { kind ->
-                        val free = firstFreeCell(panel.components)
-                        if (free == null) {
-                            viewModel.select(null)
-                        } else {
-                            viewModel.addComponent(kind, free.first, free.second)
-                            showProperties = true
-                        }
-                    },
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .graphicsLayer {
+                        rotationY = 180f * flip.value
+                        cameraDistance = 16f * density.density
+                    }
+            ) {
+                Box(
                     modifier = Modifier
-                        .width(96.dp)
-                        .fillMaxHeight()
-                )
+                        .fillMaxSize()
+                        .graphicsLayer { rotationY = if (showingPreview) 180f else 0f }
+                ) {
+                    if (showingPreview) {
+                        PreviewCanvas(
+                            components = panel.components,
+                            panelTitle = panel.name,
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    } else {
+                        Row(modifier = Modifier.fillMaxSize()) {
+                            PartRail(
+                                activeKind = (payload as? DragPayload.NewPart)?.kind,
+                                onDragStart = { kind, position ->
+                                    payload = DragPayload.NewPart(kind)
+                                    dragPosition = position
+                                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                },
+                                onDrag = { position -> dragPosition = position },
+                                onDragEnd = {
+                                    val current = payload
+                                    val target = fractionAt(dragPosition)
+                                    if (current is DragPayload.NewPart && target != null) {
+                                        viewModel.addComponent(current.kind, target.first, target.second)
+                                        showProperties = true
+                                    }
+                                    payload = null
+                                },
+                                onQuickAdd = { kind ->
+                                    val (x, y) = quickAddPosition(panel.components)
+                                    viewModel.addComponent(kind, x, y)
+                                    showProperties = true
+                                },
+                                modifier = Modifier
+                                    .width(96.dp)
+                                    .fillMaxHeight()
+                            )
 
-                PanelCanvas(
-                    components = panel.components,
-                    panelTitle = panel.name,
-                    selectedId = state.selectedId,
-                    hoverCell = hoverCell,
-                    draggingId = (payload as? DragPayload.Existing)?.component?.id,
-                    onPositioned = { origin, size ->
-                        canvasOrigin = origin
-                        canvasSize = size
-                    },
-                    onSelect = { id ->
-                        viewModel.select(id)
-                        showProperties = id != null
-                    },
-                    onDragStart = { component, position ->
-                        payload = DragPayload.Existing(component)
-                        dragPosition = position
-                        hoverCell = component.col to component.row
-                        viewModel.select(component.id)
-                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                    },
-                    onDrag = { position ->
-                        dragPosition = position
-                        val cell = cellAt(position)
-                        if (cell != hoverCell) {
-                            hoverCell = cell
-                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            FreeCanvas(
+                                components = panel.components,
+                                panelTitle = panel.name,
+                                selectedId = state.selectedId,
+                                draggingId = (payload as? DragPayload.Existing)?.component?.id,
+                                onPositioned = { origin, size ->
+                                    canvasOrigin = origin
+                                    canvasSize = size
+                                },
+                                onSelect = { id ->
+                                    viewModel.select(id)
+                                    showProperties = id != null
+                                },
+                                onDragStart = { component, position ->
+                                    payload = DragPayload.Existing(component)
+                                    dragPosition = position
+                                    viewModel.select(component.id)
+                                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                },
+                                onDrag = { position -> dragPosition = position },
+                                onDragEnd = {
+                                    val current = payload
+                                    val target = fractionAt(dragPosition)
+                                    if (current is DragPayload.Existing && target != null) {
+                                        viewModel.moveComponent(
+                                            current.component.id,
+                                            target.first,
+                                            target.second
+                                        )
+                                    }
+                                    payload = null
+                                },
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .fillMaxHeight()
+                            )
                         }
-                        // Live rearrange: the part reflows as the finger crosses cells,
-                        // swapping with any occupant instead of waiting for the drop.
-                        val current = payload
-                        if (cell != null && current is DragPayload.Existing) {
-                            viewModel.moveComponent(current.component.id, cell.first, cell.second)
-                        }
-                    },
-                    onDragEnd = {
-                        payload = null
-                        hoverCell = null
-                    },
-                    onEmptyCellTap = { col, row ->
-                        viewModel.addComponent(ComponentKind.BUTTON, col, row)
-                        showProperties = true
-                    },
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxHeight()
-                )
+                    }
+                }
             }
 
-            // Floating ghost that follows the finger.
+            // Floating ghost that follows the finger (editing side only).
             val ghost = payload
-            if (ghost != null) {
-                val density = LocalDensity.current
+            if (ghost != null && !showingPreview) {
                 val ghostSize = 56.dp
                 val half = with(density) { ghostSize.toPx() / 2f }
                 val kind = when (ghost) {
@@ -379,13 +439,18 @@ fun EditorScreen(
     }
 }
 
-private fun firstFreeCell(components: List<PanelComponent>): Pair<Int, Int>? {
-    for (row in 0 until GRID_ROWS) {
-        for (col in 0 until GRID_COLUMNS) {
-            if (components.none { it.col == col && it.row == row }) return col to row
-        }
+/** Picks a comfortable spot for a quick-added part, away from existing ones. */
+private fun quickAddPosition(components: List<PanelComponent>): Pair<Float, Float> {
+    val candidates = listOf(
+        0.5f to 0.5f, 0.25f to 0.25f, 0.75f to 0.25f, 0.25f to 0.75f, 0.75f to 0.75f,
+        0.5f to 0.12f, 0.5f to 0.88f, 0.1f to 0.5f, 0.9f to 0.5f,
+        0.18f to 0.12f, 0.82f to 0.12f, 0.18f to 0.88f, 0.82f to 0.88f
+    )
+    candidates.forEach { (x, y) ->
+        if (components.none { hypot(it.col - x, it.row - y) < 0.26f }) return x to y
     }
-    return null
+    val n = components.size
+    return snap(0.1f + (n * 0.13f) % 0.8f) to snap(0.1f + (n * 0.27f) % 0.8f)
 }
 
 @Composable
@@ -429,8 +494,8 @@ private fun PartRail(
         }
         Spacer(Modifier.height(4.dp))
         Text(
-            "Hold a part to drag it in, or tap to drop it into the next free slot. " +
-                "Rearrange placed parts by dragging them around the grid.",
+            "Hold a part to drag it anywhere, or tap to drop it in a free spot. " +
+                "Flip the screen to see your panel without the library.",
             style = MaterialTheme.typography.bodySmall,
             fontSize = 10.sp,
             color = TextLow
@@ -438,24 +503,31 @@ private fun PartRail(
     }
 }
 
+/** Free-placement editing canvas: parts sit anywhere, dragged by long-press. */
 @Composable
-private fun PanelCanvas(
+private fun FreeCanvas(
     components: List<PanelComponent>,
     panelTitle: String,
     selectedId: String?,
-    hoverCell: Pair<Int, Int>?,
     draggingId: String?,
     onPositioned: (Offset, Offset) -> Unit,
     onSelect: (String?) -> Unit,
     onDragStart: (PanelComponent, Offset) -> Unit,
     onDrag: (Offset) -> Unit,
     onDragEnd: () -> Unit,
-    onEmptyCellTap: (Int, Int) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    Box(modifier = modifier.background(Ink)) {
-        GridBackdrop(modifier = Modifier.fillMaxSize(), cell = 22.dp)
+    val density = LocalDensity.current
+    val partWpx = with(density) { CANVAS_PART_WIDTH.toPx() }
+    val partHpx = with(density) { CANVAS_PART_HEIGHT.toPx() }
+    var areaPx by remember { mutableStateOf(IntSize.Zero) }
 
+    Box(
+        modifier = modifier
+            .background(Ink)
+            .pointerInput(Unit) { detectTapGestures(onTap = { onSelect(null) }) }
+    ) {
+        GridBackdrop(modifier = Modifier.fillMaxSize(), cell = 22.dp)
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -470,9 +542,10 @@ private fun PanelCanvas(
                 overflow = TextOverflow.Ellipsis
             )
             Spacer(Modifier.height(8.dp))
-            Column(
+            Box(
                 modifier = Modifier
                     .fillMaxSize()
+                    .onSizeChanged { areaPx = it }
                     .onGloballyPositioned { coords ->
                         onPositioned(
                             coords.positionInRoot(),
@@ -480,28 +553,72 @@ private fun PanelCanvas(
                         )
                     }
             ) {
-                for (row in 0 until GRID_ROWS) {
-                    Row(modifier = Modifier.weight(1f).fillMaxWidth()) {
-                        for (col in 0 until GRID_COLUMNS) {
-                            val component = components.firstOrNull { it.col == col && it.row == row }
-                            val hovered = hoverCell?.first == col && hoverCell.second == row
-                            CanvasCell(
-                                component = component,
-                                selected = component != null && component.id == selectedId,
-                                hovered = hovered,
-                                dragging = component != null && component.id == draggingId,
-                                onSelect = { onSelect(component?.id) },
-                                onEmptyTap = { onEmptyCellTap(col, row) },
-                                onDragStart = { position ->
-                                    component?.let { onDragStart(it, position) }
-                                },
-                                onDrag = onDrag,
-                                onDragEnd = onDragEnd,
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .fillMaxHeight()
-                                    .padding(4.dp)
+                components.forEach { component ->
+                    val isSelected = component.id == selectedId
+                    val isDragging = component.id == draggingId
+                    var partOrigin by remember(component.id) { mutableStateOf(Offset.Zero) }
+                    Box(
+                        modifier = Modifier
+                            .offset {
+                                IntOffset(
+                                    (component.col * (areaPx.width - partWpx)).roundToInt(),
+                                    (component.row * (areaPx.height - partHpx)).roundToInt()
+                                )
+                            }
+                            .size(CANVAS_PART_WIDTH, CANVAS_PART_HEIGHT)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(if (isSelected) Surface2.copy(alpha = 0.9f) else Color.Transparent)
+                            .border(
+                                width = if (isSelected) 1.5.dp else 1.dp,
+                                color = if (isSelected) SignalOrange else Color.Transparent,
+                                shape = RoundedCornerShape(10.dp)
                             )
+                            .onGloballyPositioned { partOrigin = it.positionInRoot() }
+                            .pointerInput(component.id) {
+                                detectTapGestures(onTap = { onSelect(component.id) })
+                            }
+                            .pointerInput(component.id) {
+                                detectDragGesturesAfterLongPress(
+                                    onDragStart = { offset ->
+                                        onDragStart(component, partOrigin + offset)
+                                    },
+                                    onDrag = { change, _ ->
+                                        change.consume()
+                                        onDrag(partOrigin + change.position)
+                                    },
+                                    onDragEnd = { onDragEnd() },
+                                    onDragCancel = { onDragEnd() }
+                                )
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            modifier = Modifier.alpha(if (isDragging) 0.25f else 1f)
+                        ) {
+                            HardwareFace(
+                                kind = component.kind,
+                                active = isSelected,
+                                modifier = Modifier.size(46.dp)
+                            )
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                text = component.label,
+                                style = MaterialTheme.typography.bodySmall,
+                                fontSize = 10.sp,
+                                color = TextMid,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            if (component.tagAddress.isNotBlank()) {
+                                Text(
+                                    text = component.tagAddress,
+                                    fontFamily = MonoFamily,
+                                    fontSize = 10.sp,
+                                    color = SignalOrange,
+                                    maxLines = 1
+                                )
+                            }
                         }
                     }
                 }
@@ -510,102 +627,66 @@ private fun PanelCanvas(
     }
 }
 
+/** Non-interactive render of the finished panel, shown on the flipped side. */
 @Composable
-private fun CanvasCell(
-    component: PanelComponent?,
-    selected: Boolean,
-    hovered: Boolean,
-    dragging: Boolean,
-    onSelect: () -> Unit,
-    onEmptyTap: () -> Unit,
-    onDragStart: (Offset) -> Unit,
-    onDrag: (Offset) -> Unit,
-    onDragEnd: () -> Unit,
+private fun PreviewCanvas(
+    components: List<PanelComponent>,
+    panelTitle: String,
     modifier: Modifier = Modifier
 ) {
-    var cellOrigin by remember { mutableStateOf(Offset.Zero) }
-    // Fresh reads inside the gesture handlers: cells recompose while a drag is
-    // live (parts swap under the finger) and the gesture must survive that,
-    // so the pointer inputs are keyed on Unit, never on the component.
-    val currentComponent by rememberUpdatedState(component)
-    val currentOnSelect by rememberUpdatedState(onSelect)
-    val currentOnEmptyTap by rememberUpdatedState(onEmptyTap)
-    val currentOnDragStart by rememberUpdatedState(onDragStart)
-    val currentOnDrag by rememberUpdatedState(onDrag)
-    val currentOnDragEnd by rememberUpdatedState(onDragEnd)
-    val borderColor = when {
-        hovered -> SignalOrange
-        selected -> SignalOrange.copy(alpha = 0.7f)
-        component != null -> Line
-        else -> Line.copy(alpha = 0.6f)
-    }
+    val density = LocalDensity.current
+    val partWpx = with(density) { PREVIEW_PART_WIDTH.toPx() }
+    val partHpx = with(density) { PREVIEW_PART_HEIGHT.toPx() }
+    var areaPx by remember { mutableStateOf(IntSize.Zero) }
 
-    Box(
-        modifier = modifier
-            .clip(RoundedCornerShape(10.dp))
-            .background(
-                when {
-                    hovered -> SignalOrange.copy(alpha = 0.10f)
-                    component != null -> Surface2.copy(alpha = 0.85f)
-                    else -> Color.Transparent
-                }
+    Box(modifier = modifier.background(Ink)) {
+        GridBackdrop(modifier = Modifier.fillMaxSize(), cell = 26.dp)
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(10.dp)
+        ) {
+            Text(
+                text = panelTitle.uppercase(),
+                style = NameplateStyle,
+                color = TextLow,
+                fontSize = 9.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
             )
-            .border(
-                width = if (hovered || selected) 1.5.dp else 1.dp,
-                color = borderColor,
-                shape = RoundedCornerShape(10.dp)
-            )
-            .onGloballyPositioned { cellOrigin = it.positionInRoot() }
-            .pointerInput(Unit) {
-                detectTapGestures(
-                    onTap = {
-                        if (currentComponent != null) currentOnSelect() else currentOnEmptyTap()
-                    }
-                )
-            }
-            .pointerInput(Unit) {
-                detectDragGesturesAfterLongPress(
-                    onDragStart = { offset ->
-                        currentComponent?.let { currentOnDragStart(cellOrigin + offset) }
-                    },
-                    onDrag = { change, _ ->
-                        change.consume()
-                        currentOnDrag(cellOrigin + change.position)
-                    },
-                    onDragEnd = { currentOnDragEnd() },
-                    onDragCancel = { currentOnDragEnd() }
-                )
-            },
-        contentAlignment = Alignment.Center
-    ) {
-        if (component == null) {
-            Text("+", color = TextLow, fontSize = 18.sp)
-        } else {
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier.alpha(if (dragging) 0.25f else 1f)
+            Spacer(Modifier.height(8.dp))
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .onSizeChanged { areaPx = it }
             ) {
-                HardwareFace(
-                    kind = component.kind,
-                    active = selected,
-                    modifier = Modifier.size(42.dp)
-                )
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    text = component.label,
-                    style = MaterialTheme.typography.bodySmall,
-                    fontSize = 10.sp,
-                    color = TextMid,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                AnimatedVisibility(visible = component.tagAddress.isNotBlank()) {
-                    Text(
-                        text = component.tagAddress,
-                        fontFamily = MonoFamily,
-                        fontSize = 10.sp,
-                        color = SignalOrange,
-                        maxLines = 1
+                if (components.isEmpty()) {
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            "This panel is empty — flip back and drop parts from the library.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = TextMid,
+                            modifier = Modifier.padding(32.dp)
+                        )
+                    }
+                }
+                components.forEach { component ->
+                    HardwareUnit(
+                        kind = component.kind,
+                        label = component.label,
+                        caption = component.tagAddress.ifBlank { "NO TAG" },
+                        active = false,
+                        modifier = Modifier
+                            .offset {
+                                IntOffset(
+                                    (component.col * (areaPx.width - partWpx)).roundToInt(),
+                                    (component.row * (areaPx.height - partHpx)).roundToInt()
+                                )
+                            }
+                            .width(PREVIEW_PART_WIDTH)
                     )
                 }
             }

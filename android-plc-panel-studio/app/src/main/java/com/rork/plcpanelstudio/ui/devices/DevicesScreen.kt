@@ -96,9 +96,6 @@ fun DevicesScreen(
                     IconButton(onClick = { viewModel.refreshAll() }) {
                         Icon(Icons.Default.Refresh, contentDescription = "Refresh all")
                     }
-                    IconButton(onClick = { showAdd = !showAdd }) {
-                        Icon(Icons.Default.Add, contentDescription = "Add device")
-                    }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = Ink)
             )

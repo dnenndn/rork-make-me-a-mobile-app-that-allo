@@ -14,9 +14,13 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import java.util.UUID
+import kotlin.math.roundToInt
 
-const val GRID_COLUMNS = 3
-const val GRID_ROWS = 5
+/** Number of snap points across each canvas axis (1/40 steps feel free but land tidy). */
+private const val SNAP_STEPS = 40
+
+/** Clamps a normalized coordinate into 0..1 and snaps it to a fine grid. */
+fun snap(value: Float): Float = (value.coerceIn(0f, 1f) * SNAP_STEPS).roundToInt() / SNAP_STEPS.toFloat()
 
 data class EditorUiState(
     val panel: Panel? = null,
@@ -74,19 +78,15 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         _uiState.value = _uiState.value.copy(message = null)
     }
 
-    /** Places a brand new part, ignoring the drop when the target cell is occupied. */
-    fun addComponent(kind: ComponentKind, col: Int, row: Int) {
+    /** Places a brand new part at the given canvas position. */
+    fun addComponent(kind: ComponentKind, x: Float, y: Float) {
         val panel = _uiState.value.panel ?: return
-        if (panel.components.any { it.col == col && it.row == row }) {
-            _uiState.value = _uiState.value.copy(message = "That slot is already taken")
-            return
-        }
         val index = panel.components.count { it.kind == kind } + 1
         val component = PanelComponent(
             id = "cmp-${UUID.randomUUID()}",
             kind = kind,
-            col = col,
-            row = row,
+            col = snap(x),
+            row = snap(y),
             label = "${kind.displayName} $index",
             tagAddress = "",
             direction = kind.defaultDirection,
@@ -96,20 +96,20 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         _uiState.value = _uiState.value.copy(selectedId = component.id)
     }
 
-    /** Moves a placed part; swaps with whatever already sits in the target cell. */
-    fun moveComponent(componentId: String, col: Int, row: Int) {
+    /** Moves a placed part to a new canvas position. */
+    fun moveComponent(componentId: String, x: Float, y: Float) {
         val panel = _uiState.value.panel ?: return
         val moving = panel.components.firstOrNull { it.id == componentId } ?: return
-        if (moving.col == col && moving.row == row) return
-        val occupant = panel.components.firstOrNull { it.col == col && it.row == row }
-        val updated = panel.components.map { component ->
-            when (component.id) {
-                moving.id -> component.copy(col = col, row = row)
-                occupant?.id -> component.copy(col = moving.col, row = moving.row)
-                else -> component
-            }
-        }
-        mutate(panel.copy(components = updated))
+        val targetX = snap(x)
+        val targetY = snap(y)
+        if (moving.col == targetX && moving.row == targetY) return
+        mutate(
+            panel.copy(
+                components = panel.components.map { component ->
+                    if (component.id == componentId) component.copy(col = targetX, row = targetY) else component
+                }
+            )
+        )
     }
 
     fun updateComponent(updated: PanelComponent) {

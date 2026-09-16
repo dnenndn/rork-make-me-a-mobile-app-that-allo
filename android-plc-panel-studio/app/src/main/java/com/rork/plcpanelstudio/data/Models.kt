@@ -40,8 +40,10 @@ enum class IoDirection {
 data class PanelComponent(
     val id: String,
     val kind: ComponentKind,
-    val col: Int,
-    val row: Int,
+    /** Normalized horizontal position (0..1) of the part's center on the panel canvas. */
+    val col: Float,
+    /** Normalized vertical position (0..1) of the part's center on the panel canvas. */
+    val row: Float,
     val label: String,
     val tagAddress: String,
     val direction: IoDirection,

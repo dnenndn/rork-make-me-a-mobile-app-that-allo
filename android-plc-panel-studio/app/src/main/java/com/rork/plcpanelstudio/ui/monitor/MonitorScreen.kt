@@ -12,12 +12,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -34,7 +31,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -43,9 +42,13 @@ import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -73,6 +76,11 @@ import com.rork.plcpanelstudio.ui.theme.TextMid
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlin.math.roundToInt
+
+/** Footprint used to place live parts at their edited 0..1 canvas positions. */
+private val MONITOR_PART_WIDTH = 104.dp
+private val MONITOR_PART_HEIGHT = 160.dp
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -145,17 +153,16 @@ fun MonitorScreen(
                         )
                     }
                 } else {
-                    LazyVerticalGrid(
-                        columns = GridCells.Fixed(3),
-                        modifier = Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(16.dp),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                        verticalArrangement = Arrangement.spacedBy(16.dp)
+                    val density = LocalDensity.current
+                    val partWpx = with(density) { MONITOR_PART_WIDTH.toPx() }
+                    val partHpx = with(density) { MONITOR_PART_HEIGHT.toPx() }
+                    var areaPx by remember { mutableStateOf(IntSize.Zero) }
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .onSizeChanged { areaPx = it }
                     ) {
-                        items(
-                            components.sortedWith(compareBy({ it.row }, { it.col })),
-                            key = { it.id }
-                        ) { component ->
+                        components.forEach { component ->
                             LiveComponent(
                                 component = component,
                                 value = state.values[component.tagAddress] ?: 0,
@@ -166,7 +173,15 @@ fun MonitorScreen(
                                     haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                                     viewModel.onPressDown(component)
                                 },
-                                onPressUp = { viewModel.onPressUp(component) }
+                                onPressUp = { viewModel.onPressUp(component) },
+                                modifier = Modifier
+                                    .offset {
+                                        IntOffset(
+                                            (component.col * (areaPx.width - partWpx)).roundToInt(),
+                                            (component.row * (areaPx.height - partHpx)).roundToInt()
+                                        )
+                                    }
+                                    .width(MONITOR_PART_WIDTH)
                             )
                         }
                     }
@@ -188,7 +203,8 @@ private fun LiveComponent(
     pressed: Boolean,
     interactive: Boolean,
     onPressDown: () -> Unit,
-    onPressUp: () -> Unit
+    onPressUp: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     val active = when (component.kind) {
         ComponentKind.GAUGE -> value > 0
@@ -228,7 +244,7 @@ private fun LiveComponent(
         selectorPosition = value.coerceIn(0, (component.positions - 1).coerceAtLeast(1)),
         selectorPositions = component.positions.coerceAtLeast(2),
         pressed = pressed,
-        modifier = Modifier.then(interactionModifier)
+        modifier = modifier.then(interactionModifier)
     )
 }
 

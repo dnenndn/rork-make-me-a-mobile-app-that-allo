@@ -2,7 +2,6 @@ package com.rork.plcpanelstudio.ui.navigation
 
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material3.Icon
@@ -38,7 +37,6 @@ private data class TabItem(
 
 private val TABS = listOf(
     TabItem("panels", "Panels", Icons.Default.GridView),
-    TabItem("editor", "Editor", Icons.Default.Edit),
     TabItem("devices", "Devices", Icons.Default.Memory)
 )
 
@@ -93,13 +91,6 @@ fun AppNavigation() {
                 PanelsScreen(
                     onOpenMonitor = { id -> navController.navigate("monitor/$id") },
                     onEditPanel = { id -> navController.navigate("editor?panelId=$id") },
-                    contentPadding = inner
-                )
-            }
-            composable("editor") {
-                EditorScreen(
-                    panelId = null,
-                    onBack = null,
                     contentPadding = inner
                 )
             }

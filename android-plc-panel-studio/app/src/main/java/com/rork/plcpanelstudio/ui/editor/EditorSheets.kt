@@ -67,6 +67,7 @@ import com.rork.plcpanelstudio.ui.theme.SignalRed
 import com.rork.plcpanelstudio.ui.theme.Surface1
 import com.rork.plcpanelstudio.ui.theme.TextLow
 import com.rork.plcpanelstudio.ui.theme.TextMid
+import kotlin.math.roundToInt
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -107,7 +108,7 @@ fun ComponentPropertiesSheet(
                 Column(modifier = Modifier.weight(1f)) {
                     Text("Assign Tag", style = MaterialTheme.typography.titleLarge)
                     Text(
-                        "${component.kind.displayName} · slot R${component.row + 1}C${component.col + 1}",
+                        "${component.kind.displayName} · position ${(component.col * 100).roundToInt()}% / ${(component.row * 100).roundToInt()}%",
                         style = MaterialTheme.typography.bodySmall,
                         color = TextMid
                     )

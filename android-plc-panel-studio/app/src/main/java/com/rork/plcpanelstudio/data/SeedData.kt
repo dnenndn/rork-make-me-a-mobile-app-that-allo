@@ -32,8 +32,8 @@ object SeedData {
                 PanelComponent(
                     id = "c1",
                     kind = ComponentKind.BUTTON,
-                    col = 0,
-                    row = 0,
+                    col = 0.16f,
+                    row = 0.2f,
                     label = "Start",
                     tagAddress = "M0.3",
                     direction = IoDirection.INPUT,
@@ -42,8 +42,8 @@ object SeedData {
                 PanelComponent(
                     id = "c2",
                     kind = ComponentKind.BUTTON,
-                    col = 1,
-                    row = 0,
+                    col = 0.5f,
+                    row = 0.2f,
                     label = "Stop",
                     tagAddress = "M0.4",
                     direction = IoDirection.INPUT,
@@ -52,8 +52,8 @@ object SeedData {
                 PanelComponent(
                     id = "c3",
                     kind = ComponentKind.LAMP,
-                    col = 2,
-                    row = 0,
+                    col = 0.84f,
+                    row = 0.2f,
                     label = "Motor Run",
                     tagAddress = "Q0.1",
                     direction = IoDirection.OUTPUT
@@ -61,8 +61,8 @@ object SeedData {
                 PanelComponent(
                     id = "c4",
                     kind = ComponentKind.SELECTOR,
-                    col = 0,
-                    row = 1,
+                    col = 0.16f,
+                    row = 0.6f,
                     label = "Mode Select",
                     tagAddress = "M1.0",
                     direction = IoDirection.INPUT,
@@ -71,8 +71,8 @@ object SeedData {
                 PanelComponent(
                     id = "c5",
                     kind = ComponentKind.LAMP,
-                    col = 1,
-                    row = 1,
+                    col = 0.5f,
+                    row = 0.6f,
                     label = "Conveyor",
                     tagAddress = "Q0.2",
                     direction = IoDirection.OUTPUT
@@ -80,8 +80,8 @@ object SeedData {
                 PanelComponent(
                     id = "c6",
                     kind = ComponentKind.GAUGE,
-                    col = 2,
-                    row = 1,
+                    col = 0.84f,
+                    row = 0.6f,
                     label = "Line Speed",
                     tagAddress = "MW20",
                     direction = IoDirection.OUTPUT,
@@ -100,8 +100,8 @@ object SeedData {
                 PanelComponent(
                     id = "p1",
                     kind = ComponentKind.BUTTON,
-                    col = 0,
-                    row = 0,
+                    col = 0.2f,
+                    row = 0.3f,
                     label = "Cycle Start",
                     tagAddress = "I0.0",
                     direction = IoDirection.INPUT
@@ -109,8 +109,8 @@ object SeedData {
                 PanelComponent(
                     id = "p2",
                     kind = ComponentKind.LAMP,
-                    col = 1,
-                    row = 0,
+                    col = 0.5f,
+                    row = 0.3f,
                     label = "Sealer Heat",
                     tagAddress = "Q1.0",
                     direction = IoDirection.OUTPUT
@@ -118,8 +118,8 @@ object SeedData {
                 PanelComponent(
                     id = "p3",
                     kind = ComponentKind.GAUGE,
-                    col = 2,
-                    row = 0,
+                    col = 0.8f,
+                    row = 0.3f,
                     label = "Throughput",
                     tagAddress = "MW10",
                     direction = IoDirection.OUTPUT,

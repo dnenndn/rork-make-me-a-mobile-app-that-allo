@@ -93,11 +93,6 @@ fun PanelsScreen(
         topBar = {
             TopAppBar(
                 title = { Text("Panels", style = MaterialTheme.typography.headlineMedium) },
-                actions = {
-                    IconButton(onClick = { showCreate = true }) {
-                        Icon(Icons.Default.Add, contentDescription = "New panel")
-                    }
-                },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = Ink)
             )
         },
