@@ -1,0 +1,10 @@
+{
+  "apps": [
+    {
+      "name": "PLC Panel Studio",
+      "path": "android-plc-panel-studio",
+      "framework": "kotlin"
+    }
+  ],
+  "$schema": "https://rork.com/schema/rork.json"
+}
