@@ -387,9 +387,10 @@ fun EditorScreen(
             panel = panel,
             devices = state.devices,
             onDismiss = { showPanelSettings = false },
-            onApply = { name, description, deviceId ->
+            onApply = { name, description, deviceId, cover ->
                 viewModel.renamePanel(name, description)
                 viewModel.assignDevice(deviceId)
+                viewModel.setCover(cover)
                 showPanelSettings = false
             }
         )

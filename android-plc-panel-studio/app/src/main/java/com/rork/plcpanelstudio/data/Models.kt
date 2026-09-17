@@ -62,7 +62,9 @@ data class Panel(
     val description: String,
     val deviceId: String?,
     val components: List<PanelComponent>,
-    val updatedAtMillis: Long
+    val updatedAtMillis: Long,
+    /** Id of the cover picture shown in the panels list (see ui.components.PANEL_COVERS). */
+    val cover: String = "logo"
 )
 
 @Serializable

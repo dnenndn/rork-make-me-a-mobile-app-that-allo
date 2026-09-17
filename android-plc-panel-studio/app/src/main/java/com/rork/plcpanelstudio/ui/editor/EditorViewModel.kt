@@ -137,6 +137,13 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         mutate(panel.copy(deviceId = deviceId))
     }
 
+    /** Sets the cover picture shown for this panel in the panels list. */
+    fun setCover(coverId: String) {
+        val panel = _uiState.value.panel ?: return
+        if (panel.cover == coverId) return
+        mutate(panel.copy(cover = coverId))
+    }
+
     fun save() {
         val panel = _uiState.value.panel ?: return
         repository.upsertPanel(panel.copy(updatedAtMillis = System.currentTimeMillis()))

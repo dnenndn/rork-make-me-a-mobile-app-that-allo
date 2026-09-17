@@ -14,6 +14,8 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -57,7 +59,9 @@ import com.rork.plcpanelstudio.data.IoDirection
 import com.rork.plcpanelstudio.data.Panel
 import com.rork.plcpanelstudio.data.PanelComponent
 import com.rork.plcpanelstudio.data.PlcDevice
+import com.rork.plcpanelstudio.ui.components.CoverTile
 import com.rork.plcpanelstudio.ui.components.HardwareFace
+import com.rork.plcpanelstudio.ui.components.PANEL_COVERS
 import com.rork.plcpanelstudio.ui.theme.Ink
 import com.rork.plcpanelstudio.ui.theme.Line
 import com.rork.plcpanelstudio.ui.theme.MonoFamily
@@ -282,12 +286,13 @@ fun PanelSettingsSheet(
     panel: Panel,
     devices: List<PlcDevice>,
     onDismiss: () -> Unit,
-    onApply: (String, String, String?) -> Unit
+    onApply: (String, String, String?, String) -> Unit
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var name by remember(panel.id) { mutableStateOf(panel.name) }
     var description by remember(panel.id) { mutableStateOf(panel.description) }
     var deviceId by remember(panel.id) { mutableStateOf(panel.deviceId) }
+    var cover by remember(panel.id) { mutableStateOf(panel.cover) }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -317,6 +322,17 @@ fun PanelSettingsSheet(
                 label = { Text("Description") },
                 modifier = Modifier.fillMaxWidth()
             )
+            Spacer(Modifier.height(14.dp))
+            SectionLabel("Cover picture")
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                items(PANEL_COVERS, key = { it.id }) { item ->
+                    CoverTile(
+                        item = item,
+                        selected = item.id == cover,
+                        onClick = { cover = item.id }
+                    )
+                }
+            }
             Spacer(Modifier.height(18.dp))
             SectionLabel("Linked PLC")
             if (devices.isEmpty()) {
@@ -344,7 +360,7 @@ fun PanelSettingsSheet(
                 TextButton(onClick = onDismiss) { Text("Cancel", color = SignalOrange) }
                 Spacer(Modifier.width(10.dp))
                 Button(
-                    onClick = { onApply(name, description, deviceId) },
+                    onClick = { onApply(name, description, deviceId, cover) },
                     colors = ButtonDefaults.buttonColors(
                         containerColor = SignalOrange,
                         contentColor = Ink

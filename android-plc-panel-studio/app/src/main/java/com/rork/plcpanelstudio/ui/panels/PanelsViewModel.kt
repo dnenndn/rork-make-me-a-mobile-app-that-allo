@@ -54,14 +54,20 @@ class PanelsViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    fun createPanel(name: String, description: String, deviceId: String?): String {
+    fun createPanel(
+        name: String,
+        description: String,
+        deviceId: String?,
+        cover: String
+    ): String {
         val panel = Panel(
             id = "panel-${UUID.randomUUID()}",
             name = name.ifBlank { "Untitled Panel" },
             description = description,
             deviceId = deviceId,
             components = emptyList(),
-            updatedAtMillis = System.currentTimeMillis()
+            updatedAtMillis = System.currentTimeMillis(),
+            cover = cover
         )
         repository.upsertPanel(panel)
         repository.setActivePanel(panel.id)

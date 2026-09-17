@@ -1,5 +1,6 @@
 package com.rork.plcpanelstudio.ui.panels
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -16,8 +17,11 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.MoreVert
@@ -46,6 +50,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -55,9 +61,11 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.rork.plcpanelstudio.data.ComponentKind
 import com.rork.plcpanelstudio.data.DeviceStatus
 import com.rork.plcpanelstudio.data.PlcDevice
-import com.rork.plcpanelstudio.ui.components.GridBackdrop
+import com.rork.plcpanelstudio.ui.components.CoverTile
 import com.rork.plcpanelstudio.ui.components.HardwareFace
+import com.rork.plcpanelstudio.ui.components.PANEL_COVERS
 import com.rork.plcpanelstudio.ui.components.StatusRow
+import com.rork.plcpanelstudio.ui.components.coverRes
 import com.rork.plcpanelstudio.ui.theme.Ink
 import com.rork.plcpanelstudio.ui.theme.Line
 import com.rork.plcpanelstudio.ui.theme.MonoFamily
@@ -145,9 +153,9 @@ fun PanelsScreen(
         CreatePanelDialog(
             devices = state.devices,
             onDismiss = { showCreate = false },
-            onCreate = { name, description, deviceId ->
+            onCreate = { name, description, deviceId, cover ->
                 showCreate = false
-                val id = viewModel.createPanel(name, description, deviceId)
+                val id = viewModel.createPanel(name, description, deviceId, cover)
                 onEditPanel(id)
             }
         )
@@ -273,6 +281,7 @@ private fun PanelCard(
     }
 }
 
+/** The panel's cover picture, used as the main thumbnail in the list. */
 @Composable
 private fun PanelThumbnail(row: PanelRow, modifier: Modifier = Modifier) {
     Box(
@@ -281,34 +290,34 @@ private fun PanelThumbnail(row: PanelRow, modifier: Modifier = Modifier) {
             .background(Ink)
             .border(1.dp, Line, RoundedCornerShape(10.dp))
     ) {
-        GridBackdrop(modifier = Modifier.fillMaxSize(), cell = 14.dp)
-        Column(modifier = Modifier.padding(8.dp)) {
-            Text(
-                text = row.panel.name.take(12).uppercase(),
-                style = NameplateStyle,
-                fontSize = 9.sp,
-                color = TextLow,
-                maxLines = 1
-            )
-            Spacer(Modifier.height(6.dp))
-            val preview = row.panel.components.take(6)
-            if (preview.isEmpty()) {
-                Text("EMPTY", style = NameplateStyle, fontSize = 9.sp, color = TextLow)
-            } else {
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    preview.chunked(3).forEach { chunk ->
-                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            chunk.forEach { component ->
-                                HardwareFace(
-                                    kind = component.kind,
-                                    active = row.status == DeviceStatus.CONNECTED &&
-                                        component.kind == ComponentKind.LAMP,
-                                    modifier = Modifier.size(26.dp)
-                                )
-                            }
-                        }
-                    }
-                }
+        Image(
+            painter = painterResource(coverRes(row.panel.cover)),
+            contentDescription = null,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier.fillMaxSize()
+        )
+        Box(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .background(Ink.copy(alpha = 0.78f))
+                .padding(horizontal = 8.dp, vertical = 6.dp)
+        ) {
+            Column {
+                Text(
+                    text = row.panel.name.take(12).uppercase(),
+                    style = NameplateStyle,
+                    fontSize = 9.sp,
+                    color = TextMid,
+                    maxLines = 1
+                )
+                val partCount = row.panel.components.size
+                Text(
+                    text = if (partCount == 0) "EMPTY" else "$partCount PARTS",
+                    style = NameplateStyle,
+                    fontSize = 9.sp,
+                    color = TextLow
+                )
             }
         }
         Box(
@@ -327,18 +336,21 @@ private fun PanelThumbnail(row: PanelRow, modifier: Modifier = Modifier) {
 private fun CreatePanelDialog(
     devices: List<PlcDevice>,
     onDismiss: () -> Unit,
-    onCreate: (String, String, String?) -> Unit
+    onCreate: (String, String, String?, String) -> Unit
 ) {
     var name by remember { mutableStateOf("") }
     var description by remember { mutableStateOf("") }
     var deviceId by remember { mutableStateOf(devices.firstOrNull()?.id) }
+    var cover by remember { mutableStateOf(PANEL_COVERS.first().id) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = Surface2,
         title = { Text("New Panel") },
         text = {
-            Column {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState())
+            ) {
                 OutlinedTextField(
                     value = name,
                     onValueChange = { name = it },
@@ -353,6 +365,18 @@ private fun CreatePanelDialog(
                     label = { Text("Description") },
                     modifier = Modifier.fillMaxWidth()
                 )
+                Spacer(Modifier.height(14.dp))
+                Text("COVER PICTURE", style = NameplateStyle, color = TextLow)
+                Spacer(Modifier.height(6.dp))
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(PANEL_COVERS, key = { it.id }) { item ->
+                        CoverTile(
+                            item = item,
+                            selected = item.id == cover,
+                            onClick = { cover = item.id }
+                        )
+                    }
+                }
                 Spacer(Modifier.height(14.dp))
                 Text("PLC DEVICE", style = NameplateStyle, color = TextLow)
                 Spacer(Modifier.height(6.dp))
@@ -399,7 +423,7 @@ private fun CreatePanelDialog(
             }
         },
         confirmButton = {
-            TextButton(onClick = { onCreate(name, description, deviceId) }) {
+            TextButton(onClick = { onCreate(name, description, deviceId, cover) }) {
                 Text("Create", fontWeight = FontWeight.Bold)
             }
         },
