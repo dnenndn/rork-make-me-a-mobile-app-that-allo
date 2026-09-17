@@ -1,7 +1,7 @@
 package com.rork.plcpanelstudio.ui.editor
 
-import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.tween
+import android.content.res.Configuration
+import androidx.compose.animation.Crossfade
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -26,7 +26,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Flip
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -59,6 +58,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.positionInRoot
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
@@ -105,7 +105,7 @@ private sealed interface DragPayload {
 private val CANVAS_PART_WIDTH = 84.dp
 private val CANVAS_PART_HEIGHT = 116.dp
 
-/** Footprint used in the flipped preview and on the monitor screen. */
+/** Footprint used in the rotated preview and on the monitor screen. */
 private val PREVIEW_PART_WIDTH = 104.dp
 private val PREVIEW_PART_HEIGHT = 160.dp
 
@@ -123,8 +123,6 @@ fun EditorScreen(
     var showPanelSwitcher by remember { mutableStateOf(false) }
     var showProperties by remember { mutableStateOf(false) }
     var showPanelSettings by remember { mutableStateOf(false) }
-    var previewMode by remember { mutableStateOf(false) }
-    var showingPreview by remember { mutableStateOf(false) }
     var justSaved by remember { mutableStateOf(false) }
 
     LaunchedEffect(panelId) { viewModel.load(panelId) }
@@ -143,19 +141,11 @@ fun EditorScreen(
         }
     }
 
-    // Card-flip animation: rotate to the midpoint, swap the content, rotate on.
-    // The preview side is counter-rotated so it reads correctly when settled.
-    val flip = remember { Animatable(0f) }
-    LaunchedEffect(previewMode) {
-        val target = if (previewMode) 1f else 0f
-        if (flip.value != target) {
-            flip.animateTo(0.5f, tween(150))
-            showingPreview = previewMode
-            flip.animateTo(target, tween(150))
-        }
-    }
-
     val panel = state.panel
+
+    // The device's physical orientation drives the mode: portrait edits with
+    // the library rail, landscape previews the finished panel without it.
+    val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
     val haptics = LocalHapticFeedback.current
     val density = LocalDensity.current
 
@@ -201,8 +191,8 @@ fun EditorScreen(
                             overflow = TextOverflow.Ellipsis
                         )
                         Text(
-                            text = if (previewMode) {
-                                "Preview — flip back to keep editing"
+                            text = if (isLandscape) {
+                                "Preview — rotate back to keep editing"
                             } else {
                                 state.device?.let { "${it.name} · ${it.endpoint}" } ?: "No device linked"
                             },
@@ -214,14 +204,6 @@ fun EditorScreen(
                     }
                 },
                 actions = {
-                    if (panel != null) {
-                        IconButton(onClick = { previewMode = !previewMode }) {
-                            Icon(
-                                Icons.Default.Flip,
-                                contentDescription = if (previewMode) "Flip back to editing" else "Flip to preview"
-                            )
-                        }
-                    }
                     TextButton(
                         onClick = { viewModel.save(); justSaved = true },
                         enabled = panel != null && !justSaved
@@ -275,27 +257,15 @@ fun EditorScreen(
                 .padding(top = inner.calculateTopPadding())
                 .padding(bottom = contentPadding.calculateBottomPadding())
         ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .graphicsLayer {
-                        rotationY = 180f * flip.value
-                        cameraDistance = 16f * density.density
-                    }
-            ) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .graphicsLayer { rotationY = if (showingPreview) 180f else 0f }
-                ) {
-                    if (showingPreview) {
-                        PreviewCanvas(
-                            components = panel.components,
-                            panelTitle = panel.name,
-                            modifier = Modifier.fillMaxSize()
-                        )
-                    } else {
-                        Row(modifier = Modifier.fillMaxSize()) {
+            Crossfade(targetState = isLandscape, label = "editorMode") { landscape ->
+                if (landscape) {
+                    PreviewCanvas(
+                        components = panel.components,
+                        panelTitle = panel.name,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                } else {
+                    Row(modifier = Modifier.fillMaxSize()) {
                             PartRail(
                                 activeKind = (payload as? DragPayload.NewPart)?.kind,
                                 onDragStart = { kind, position ->
@@ -362,11 +332,10 @@ fun EditorScreen(
                         }
                     }
                 }
-            }
 
             // Floating ghost that follows the finger (editing side only).
             val ghost = payload
-            if (ghost != null && !showingPreview) {
+            if (ghost != null && !isLandscape) {
                 val ghostSize = 56.dp
                 val half = with(density) { ghostSize.toPx() / 2f }
                 val kind = when (ghost) {
@@ -495,7 +464,7 @@ private fun PartRail(
         Spacer(Modifier.height(4.dp))
         Text(
             "Hold a part to drag it anywhere, or tap to drop it in a free spot. " +
-                "Flip the screen to see your panel without the library.",
+                "Rotate your phone to preview the panel without the library.",
             style = MaterialTheme.typography.bodySmall,
             fontSize = 10.sp,
             color = TextLow
@@ -627,7 +596,7 @@ private fun FreeCanvas(
     }
 }
 
-/** Non-interactive render of the finished panel, shown on the flipped side. */
+/** Non-interactive render of the finished panel, shown when the device is rotated. */
 @Composable
 private fun PreviewCanvas(
     components: List<PanelComponent>,
@@ -666,7 +635,7 @@ private fun PreviewCanvas(
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
-                            "This panel is empty — flip back and drop parts from the library.",
+                            "This panel is empty — rotate back and drop parts from the library.",
                             style = MaterialTheme.typography.bodyMedium,
                             color = TextMid,
                             modifier = Modifier.padding(32.dp)
