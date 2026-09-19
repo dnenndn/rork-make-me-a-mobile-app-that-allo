@@ -34,7 +34,8 @@ data class MonitorUiState(
     val lastUpdateMillis: Long? = null,
     val pingMs: Int? = null,
     val error: String? = null,
-    val pressedIds: Set<String> = emptySet()
+    val pressedIds: Set<String> = emptySet(),
+    val forcedIds: Set<String> = emptySet()
 )
 
 class MonitorViewModel(application: Application) : AndroidViewModel(application) {
@@ -89,8 +90,7 @@ class MonitorViewModel(application: Application) : AndroidViewModel(application)
             return
         }
         val addresses = panel.components
-            .map { it.tagAddress }
-            .filter { it.isNotBlank() }
+            .flatMap { it.allAddresses }
             .distinct()
         if (addresses.isEmpty()) {
             _uiState.value = state.copy(live = false, error = "No tags assigned yet")
@@ -135,23 +135,88 @@ class MonitorViewModel(application: Application) : AndroidViewModel(application)
 
     private fun buildReadings(panel: Panel, values: Map<String, Int>): List<TagReading> =
         panel.components
-            .filter { it.tagAddress.isNotBlank() }
-            .distinctBy { it.tagAddress }
-            .map { component ->
-                TagReading(
-                    address = component.tagAddress,
-                    value = values[component.tagAddress] ?: 0,
-                    label = component.label,
-                    direction = component.direction
-                )
+            .flatMap { component ->
+                if (component.hasPositionTags) {
+                    // One reading per selector position input.
+                    (0 until component.positionCount).mapNotNull { index ->
+                        val address = component.positionAddress(index)
+                        if (address.isBlank()) null else TagReading(
+                            address = address,
+                            value = values[address] ?: 0,
+                            label = "${component.label} · P${index + 1}",
+                            direction = IoDirection.INPUT
+                        )
+                    }
+                } else if (component.tagAddress.isNotBlank()) {
+                    listOf(
+                        TagReading(
+                            address = component.tagAddress,
+                            value = values[component.tagAddress] ?: 0,
+                            label = component.label,
+                            direction = component.direction
+                        )
+                    )
+                } else emptyList()
             }
+            .distinctBy { it.address }
 
     /** Press-and-hold on a momentary input writes 1, release writes 0. */
     fun onPressDown(component: PanelComponent) {
         if (component.direction != IoDirection.INPUT) return
         markPressed(component.id, true)
-        if (component.kind == ComponentKind.BUTTON && component.momentary) {
+        if (component.kind.isPushButton && component.momentary) {
             write(component, 1)
+        }
+    }
+
+    /** The selector knob was turned to [position]; write it to the tag. */
+    fun setSelector(component: PanelComponent, position: Int) {
+        if (component.kind != ComponentKind.SELECTOR || component.direction != IoDirection.INPUT) return
+        val target = position.coerceIn(0, component.positionCount - 1)
+        if (component.hasPositionTags) {
+            writeSelectorPosition(component, target)
+        } else {
+            // Legacy selector: a single tag holds the position number.
+            write(component, target)
+        }
+    }
+
+    /**
+     * Selector with one input per position: raise the input of [target] and drop the others.
+     * The other inputs are dropped first (break before make) so two positions are never
+     * active at the same time on the PLC.
+     */
+    private fun writeSelectorPosition(component: PanelComponent, target: Int) {
+        val device = _uiState.value.device ?: return
+        val tags = (0 until component.positionCount).map { component.positionAddress(it) }
+        if (tags.none { it.isNotBlank() }) return
+
+        // Optimistic update so the knob and glow react instantly.
+        val optimistic = _uiState.value.values.toMutableMap()
+        tags.forEachIndexed { index, tag ->
+            if (tag.isNotBlank()) optimistic[tag] = if (index == target) 1 else 0
+        }
+        val panel = _uiState.value.panel
+        _uiState.value = _uiState.value.copy(
+            values = optimistic,
+            readings = panel?.let { buildReadings(it, optimistic) } ?: _uiState.value.readings
+        )
+
+        viewModelScope.launch {
+            val writes = tags.withIndex()
+                .filter { it.value.isNotBlank() }
+                .sortedBy { if (it.index == target) 1 else 0 }
+            for ((index, tag) in writes) {
+                val value = if (index == target) 1 else 0
+                when (val result = repository.bridge.write(device, tag, value)) {
+                    is BridgeResult.Success -> repository.cacheValues(device.id, mapOf(tag to result.data))
+                    is BridgeResult.Failure -> {
+                        Log.w(TAG, "Write to $tag failed: ${result.reason}")
+                        _uiState.value = _uiState.value.copy(error = "Write failed: ${result.reason}")
+                        return@launch
+                    }
+                }
+            }
         }
     }
 
@@ -159,8 +224,8 @@ class MonitorViewModel(application: Application) : AndroidViewModel(application)
         markPressed(component.id, false)
         if (component.direction != IoDirection.INPUT) return
         when {
-            component.kind == ComponentKind.BUTTON && component.momentary -> write(component, 0)
-            component.kind == ComponentKind.BUTTON -> {
+            component.kind.isPushButton && component.momentary -> write(component, 0)
+            component.kind.isPushButton -> {
                 val next = if ((_uiState.value.values[component.tagAddress] ?: 0) > 0) 0 else 1
                 write(component, next)
             }
@@ -170,6 +235,25 @@ class MonitorViewModel(application: Application) : AndroidViewModel(application)
                 write(component, next)
             }
         }
+    }
+
+    /**
+     * Force-writes a value directly to an output tag (lamp/gauge), bypassing the normal
+     * input-only write restriction. Marks the component as "forced" so the UI can flag it —
+     * useful for bench-testing wiring/logic without waiting on the real PLC program.
+     * Note: this is a plain write, not a true PLC "force" — if the PLC's own program keeps
+     * driving that address, the next scan cycle can overwrite it again.
+     */
+    fun forceWrite(component: PanelComponent, value: Int) {
+        val device = _uiState.value.device ?: return
+        if (component.tagAddress.isBlank()) return
+        _uiState.value = _uiState.value.copy(forcedIds = _uiState.value.forcedIds + component.id)
+        write(component, value)
+    }
+
+    /** Stops flagging a component as forced; the next poll shows whatever the PLC reports. */
+    fun releaseForce(component: PanelComponent) {
+        _uiState.value = _uiState.value.copy(forcedIds = _uiState.value.forcedIds - component.id)
     }
 
     private fun markPressed(id: String, pressed: Boolean) {

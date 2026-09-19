@@ -19,12 +19,17 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -40,6 +45,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
@@ -92,9 +98,27 @@ fun MonitorScreen(
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val haptics = LocalHapticFeedback.current
+    var forceTarget by remember { mutableStateOf<PanelComponent?>(null) }
 
     LaunchedEffect(panelId) { viewModel.start(panelId) }
     DisposableEffect(Unit) { onDispose { viewModel.stop() } }
+
+    forceTarget?.let { component ->
+        ForceOutputDialog(
+            component = component,
+            currentValue = state.values[component.tagAddress] ?: 0,
+            onDismiss = { forceTarget = null },
+            onForce = { value ->
+                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                viewModel.forceWrite(component, value)
+                forceTarget = null
+            },
+            onRelease = {
+                viewModel.releaseForce(component)
+                forceTarget = null
+            }
+        )
+    }
 
     Scaffold(
         containerColor = Ink,
@@ -166,14 +190,27 @@ fun MonitorScreen(
                             LiveComponent(
                                 component = component,
                                 value = state.values[component.tagAddress] ?: 0,
+                                positionValues = if (component.hasPositionTags) {
+                                    (0 until component.positionCount).map { index ->
+                                        state.values[component.positionAddress(index)] ?: 0
+                                    }
+                                } else emptyList(),
                                 pressed = component.id in state.pressedIds,
+                                forced = component.id in state.forcedIds,
                                 interactive = component.direction == IoDirection.INPUT &&
-                                    component.tagAddress.isNotBlank(),
+                                    component.isWired,
+                                forceable = component.direction == IoDirection.OUTPUT &&
+                                    component.isWired,
                                 onPressDown = {
                                     haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                                     viewModel.onPressDown(component)
                                 },
                                 onPressUp = { viewModel.onPressUp(component) },
+                                onSelectorChange = { position -> viewModel.setSelector(component, position) },
+                                onForceRequest = {
+                                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    forceTarget = component
+                                },
                                 modifier = Modifier
                                     .offset {
                                         IntOffset(
@@ -202,35 +239,84 @@ private fun LiveComponent(
     value: Int,
     pressed: Boolean,
     interactive: Boolean,
+    positionValues: List<Int> = emptyList(),
     onPressDown: () -> Unit,
     onPressUp: () -> Unit,
+    forced: Boolean = false,
+    forceable: Boolean = false,
+    onForceRequest: () -> Unit = {},
+    onSelectorChange: (Int) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
-    val active = when (component.kind) {
-        ComponentKind.GAUGE -> value > 0
-        ComponentKind.SELECTOR -> value > 0
-        else -> value > 0
+    // Selector state. A selector wired with one input per position reports which contact is
+    // closed; a legacy single-tag selector reports one value (0..positions-1).
+    val multiSelector = component.hasPositionTags
+    val wired = component.isWired
+    val positionCount = component.positionCount
+    var localSelector by remember(component.id) { mutableStateOf(0) }
+    val activePositionIndex = if (multiSelector) positionValues.indexOfFirst { it > 0 } else -1
+    val shownSelectorPosition = when {
+        !wired -> localSelector.coerceIn(0, positionCount - 1)
+        // No contact closed (e.g. a centre position without an input): show the last commanded one.
+        multiSelector -> if (activePositionIndex >= 0) activePositionIndex else localSelector.coerceIn(0, positionCount - 1)
+        else -> value.coerceIn(0, positionCount - 1)
     }
+    val active = if (multiSelector) activePositionIndex >= 0 else value > 0
     val caption = when {
-        component.tagAddress.isBlank() -> "NO TAG"
+        !wired -> "NO TAG"
         component.kind == ComponentKind.GAUGE -> "$value / ${component.scaleMax}"
+        multiSelector -> {
+            val address = component.positionAddress(shownSelectorPosition)
+            "POS ${shownSelectorPosition + 1}" + if (address.isNotBlank()) " · $address" else ""
+        }
+        component.kind == ComponentKind.SELECTOR && component.positions >= 3 -> "POS ${value + 1}"
         component.kind == ComponentKind.SELECTOR -> if (value > 0) "AUTO" else "MANUAL"
         component.direction == IoDirection.INPUT -> if (active) "ACTIVE" else "INACTIVE"
         else -> if (active) "ON" else "OFF"
     }
 
+    // The knob turns on touch (drag to rotate, tap to step). Without a tag it just turns
+    // locally; with tags the new position is written to the PLC.
+    val onSelectorTurn: (Int) -> Unit = { position ->
+        localSelector = position
+        if (wired) onSelectorChange(position)
+    }
+    val selectorCallback: ((Int) -> Unit)? =
+        if (component.kind == ComponentKind.SELECTOR && component.direction == IoDirection.INPUT) {
+            onSelectorTurn
+        } else null
+
+    // Local press state so the button always reacts to touch, even if the tag is not
+    // assigned yet (in which case nothing is written to the PLC).
+    var localPressed by remember(component.id) { mutableStateOf(false) }
+    val isPushInput = component.kind.isPushButton && component.direction == IoDirection.INPUT
+
     // Press-and-hold semantics: write on touch down, release on lift.
-    val interactionModifier = if (interactive) {
-        Modifier.pointerInput(component.id) {
+    val interactionModifier = when {
+        interactive && component.kind != ComponentKind.SELECTOR -> Modifier.pointerInput(component.id) {
             awaitEachGesture {
                 awaitFirstDown(requireUnconsumed = false)
+                localPressed = true
                 onPressDown()
                 waitForUpOrCancellation()
+                localPressed = false
                 onPressUp()
             }
         }
-    } else {
-        Modifier
+        isPushInput -> Modifier.pointerInput(component.id) {
+            awaitEachGesture {
+                awaitFirstDown(requireUnconsumed = false)
+                localPressed = true
+                waitForUpOrCancellation()
+                localPressed = false
+            }
+        }
+        // Outputs (lamps/gauges) aren't pressed like a control — long-press instead opens
+        // a "Force" dialog, mirroring the force-table concept from real PLC HMIs.
+        forceable -> Modifier.pointerInput(component.id) {
+            detectTapGestures(onLongPress = { onForceRequest() })
+        }
+        else -> Modifier
     }
 
     HardwareUnit(
@@ -241,10 +327,84 @@ private fun LiveComponent(
         analogValue = if (component.kind == ComponentKind.GAUGE) {
             value.toFloat() / component.scaleMax.coerceAtLeast(1).toFloat()
         } else 0f,
-        selectorPosition = value.coerceIn(0, (component.positions - 1).coerceAtLeast(1)),
-        selectorPositions = component.positions.coerceAtLeast(2),
-        pressed = pressed,
+        selectorPosition = shownSelectorPosition,
+        selectorPositions = component.positionCount,
+        pressed = pressed || localPressed,
+        forced = forced,
+        onSelectorChange = selectorCallback,
         modifier = modifier.then(interactionModifier)
+    )
+}
+
+/** Bottom-sheet-style dialog to force a value onto an output tag for bench testing. */
+@Composable
+private fun ForceOutputDialog(
+    component: PanelComponent,
+    currentValue: Int,
+    onDismiss: () -> Unit,
+    onForce: (Int) -> Unit,
+    onRelease: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = Surface2,
+        title = { Text("Force \"${component.label}\"") },
+        text = {
+            Column {
+                Text(
+                    "Writes directly to ${component.tagAddress}. If the PLC's own program " +
+                        "keeps driving this address, it may overwrite the forced value on " +
+                        "its next scan.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = TextMid
+                )
+                Spacer(Modifier.height(14.dp))
+                if (component.kind == ComponentKind.GAUGE) {
+                    var text by remember { mutableStateOf(currentValue.toString()) }
+                    OutlinedTextField(
+                        value = text,
+                        onValueChange = { text = it.filter(Char::isDigit).take(6) },
+                        label = { Text("Forced value") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(Modifier.height(14.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        TextButton(onClick = onRelease) { Text("Release", color = TextMid) }
+                        Button(
+                            onClick = { onForce(text.toIntOrNull() ?: 0) },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = SignalOrange,
+                                contentColor = Ink
+                            )
+                        ) { Text("Force", fontWeight = FontWeight.Bold) }
+                    }
+                } else {
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Button(
+                            onClick = { onForce(1) },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = SignalOrange,
+                                contentColor = Ink
+                            )
+                        ) { Text("Force ON", fontWeight = FontWeight.Bold) }
+                        Button(
+                            onClick = { onForce(0) },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Surface1,
+                                contentColor = TextHi
+                            )
+                        ) { Text("Force OFF") }
+                    }
+                    Spacer(Modifier.height(10.dp))
+                    TextButton(onClick = onRelease) { Text("Release forced value", color = TextMid) }
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel", color = TextMid) }
+        }
     )
 }
 

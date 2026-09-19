@@ -77,7 +77,7 @@ import kotlin.math.roundToInt
 @Composable
 fun ComponentPropertiesSheet(
     component: PanelComponent,
-    suggestAddress: (IoDirection) -> String,
+    suggestAddress: (IoDirection, Set<String>) -> String,
     onDismiss: () -> Unit,
     onApply: (PanelComponent) -> Unit,
     onDelete: () -> Unit
@@ -89,6 +89,13 @@ fun ComponentPropertiesSheet(
     var momentary by remember(component.id) { mutableStateOf(component.momentary) }
     var positions by remember(component.id) { mutableIntStateOf(component.positions.coerceIn(2, 3)) }
     var scaleMax by remember(component.id) { mutableStateOf(component.scaleMax.toString()) }
+    // Selector: one input address per position (up to 3 fields are kept while editing).
+    var positionTags by remember(component.id) {
+        mutableStateOf(List(3) { component.positionAddress(it) })
+    }
+    val isSelector = component.kind == ComponentKind.SELECTOR
+    val typedPositionTags = positionTags.take(positions).map { it.trim() }.filter { it.isNotBlank() }
+    val hasDuplicateInputs = isSelector && typedPositionTags.size != typedPositionTags.toSet().size
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -122,6 +129,7 @@ fun ComponentPropertiesSheet(
                 }
             }
 
+            if (!isSelector) {
             Spacer(Modifier.height(18.dp))
             SectionLabel("Signal direction")
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -130,7 +138,7 @@ fun ComponentPropertiesSheet(
                         selected = direction == option,
                         onClick = {
                             direction = option
-                            if (address.isBlank()) address = suggestAddress(option)
+                            if (address.isBlank()) address = suggestAddress(option, emptySet())
                         },
                         label = { Text(option.displayName) },
                         colors = FilterChipDefaults.filterChipColors(
@@ -173,9 +181,11 @@ fun ComponentPropertiesSheet(
                 modifier = Modifier.padding(top = 6.dp),
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                TextButton(onClick = { address = suggestAddress(direction) }) {
+                TextButton(onClick = { address = suggestAddress(direction, emptySet()) }) {
                     Text("Suggest next free", fontSize = 12.sp)
                 }
+            }
+
             }
 
             Spacer(Modifier.height(10.dp))
@@ -196,7 +206,7 @@ fun ComponentPropertiesSheet(
             )
 
             when (component.kind) {
-                ComponentKind.BUTTON -> {
+                ComponentKind.BUTTON, ComponentKind.STOP, ComponentKind.GREEN, ComponentKind.YELLOW -> {
                     Spacer(Modifier.height(16.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Column(modifier = Modifier.weight(1f)) {
@@ -230,6 +240,74 @@ fun ComponentPropertiesSheet(
                             )
                         }
                     }
+
+                    Spacer(Modifier.height(16.dp))
+                    SectionLabel("Input for each position")
+                    Text(
+                        "Turning the selector to a position sets that position's input to 1 and " +
+                            "the other inputs to 0. Leave a position empty if it has no input.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = TextLow
+                    )
+                    for (index in 0 until positions) {
+                        Spacer(Modifier.height(8.dp))
+                        OutlinedTextField(
+                            value = positionTags[index],
+                            onValueChange = { text ->
+                                positionTags = positionTags.toMutableList().also { it[index] = text.uppercase() }
+                            },
+                            label = { Text("Position ${index + 1}") },
+                            placeholder = { Text("e.g. M0.$index") },
+                            singleLine = true,
+                            isError = hasDuplicateInputs && positionTags[index].isNotBlank() &&
+                                typedPositionTags.count { it == positionTags[index].trim() } > 1,
+                            textStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = MonoFamily),
+                            trailingIcon = {
+                                if (positionTags[index].isNotEmpty()) {
+                                    IconButton(onClick = {
+                                        positionTags = positionTags.toMutableList().also { it[index] = "" }
+                                    }) {
+                                        Icon(Icons.Default.Clear, contentDescription = "Clear position ${index + 1} input")
+                                    }
+                                }
+                            },
+                            keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Characters),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                    TextButton(
+                        onClick = {
+                            val next = positionTags.toMutableList()
+                            val taken = next.take(positions).filter { it.isNotBlank() }.toMutableSet()
+                            for (index in 0 until positions) {
+                                if (next[index].isBlank()) {
+                                    val suggestion = suggestAddress(IoDirection.INPUT, taken)
+                                    next[index] = suggestion
+                                    taken += suggestion
+                                }
+                            }
+                            positionTags = next
+                        },
+                        modifier = Modifier.padding(top = 4.dp)
+                    ) {
+                        Text("Suggest free addresses", fontSize = 12.sp)
+                    }
+                    if (hasDuplicateInputs) {
+                        Text(
+                            "Each position needs a different input.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = SignalRed
+                        )
+                    }
+                    if (component.tagAddress.isNotBlank() && !component.hasPositionTags) {
+                        Text(
+                            "Currently one tag (${component.tagAddress}) holds the position number. " +
+                                "Fill in the inputs above to switch to one input per position.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = TextLow,
+                            modifier = Modifier.padding(top = 6.dp)
+                        )
+                    }
                 }
                 ComponentKind.GAUGE -> {
                     Spacer(Modifier.height(16.dp))
@@ -243,7 +321,7 @@ fun ComponentPropertiesSheet(
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
-                ComponentKind.LAMP -> Unit
+                ComponentKind.LAMP, ComponentKind.LAMP_RED, ComponentKind.LAMP_GREEN -> Unit
             }
 
             Spacer(Modifier.height(22.dp))
@@ -259,14 +337,22 @@ fun ComponentPropertiesSheet(
                         onApply(
                             component.copy(
                                 label = label.ifBlank { component.kind.displayName },
-                                tagAddress = address.trim(),
-                                direction = direction,
+                                tagAddress = when {
+                                    isSelector && typedPositionTags.isNotEmpty() -> ""
+                                    isSelector -> component.tagAddress
+                                    else -> address.trim()
+                                },
+                                direction = if (isSelector) IoDirection.INPUT else direction,
                                 momentary = momentary,
                                 positions = positions,
+                                positionTags = if (isSelector && typedPositionTags.isNotEmpty()) {
+                                    positionTags.take(positions).map { it.trim() }
+                                } else emptyList(),
                                 scaleMax = scaleMax.toIntOrNull()?.coerceAtLeast(1) ?: 100
                             )
                         )
                     },
+                    enabled = !hasDuplicateInputs,
                     colors = ButtonDefaults.buttonColors(
                         containerColor = SignalOrange,
                         contentColor = Ink

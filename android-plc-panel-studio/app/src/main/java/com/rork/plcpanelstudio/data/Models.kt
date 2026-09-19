@@ -8,21 +8,52 @@ enum class ComponentKind {
     BUTTON,
     SELECTOR,
     LAMP,
-    GAUGE;
+    GAUGE,
+    /** Red image-based lamp (same housing as [LAMP]). */
+    LAMP_RED,
+    /** Green image-based lamp (same housing as [LAMP]). */
+    LAMP_GREEN,
+    /** Red emergency-style push button (image-based). Behaves like a [BUTTON]. */
+    STOP,
+    /** Green push button in the same housing as [STOP]. Behaves like a [BUTTON]. */
+    GREEN,
+    /** Yellow push button in the same housing as [STOP]. Behaves like a [BUTTON]. */
+    YELLOW;
 
     val displayName: String
         get() = when (this) {
             BUTTON -> "Button"
             SELECTOR -> "Selector"
-            LAMP -> "Lamp"
+            LAMP -> "Yellow Lamp"
+            LAMP_RED -> "Red Lamp"
+            LAMP_GREEN -> "Green Lamp"
             GAUGE -> "Gauge"
+            STOP -> "Red Button"
+            GREEN -> "Green Button"
+            YELLOW -> "Yellow Button"
         }
+
+    /** True for parts that are pressed like a push button (BUTTON and STOP). */
+    val isPushButton: Boolean
+        get() = this == BUTTON || this == STOP || this == GREEN || this == YELLOW
+
+    /** True for the image-based buttons that carry a user label on their own plate. */
+    val isPlateButton: Boolean
+        get() = this == STOP || this == GREEN || this == YELLOW
+
+    /** True for the image-based lamps (amber, red, green). */
+    val isLamp: Boolean
+        get() = this == LAMP || this == LAMP_RED || this == LAMP_GREEN
+
+    /** True when the part prints the user's label on its own plate instead of a separate nameplate. */
+    val hasPlateLabel: Boolean
+        get() = isPlateButton || isLamp || this == SELECTOR
 
     /** Selectors and buttons drive PLC inputs, lamps and gauges display outputs. */
     val defaultDirection: IoDirection
         get() = when (this) {
-            BUTTON, SELECTOR -> IoDirection.INPUT
-            LAMP, GAUGE -> IoDirection.OUTPUT
+            BUTTON, STOP, GREEN, YELLOW, SELECTOR -> IoDirection.INPUT
+            LAMP, LAMP_RED, LAMP_GREEN, GAUGE -> IoDirection.OUTPUT
         }
 }
 
@@ -52,8 +83,40 @@ data class PanelComponent(
     /** Full-scale value used to render a gauge. */
     val scaleMax: Int = 100,
     /** A momentary button returns to 0 on release; a maintained one latches. */
-    val momentary: Boolean = true
-)
+    val momentary: Boolean = true,
+    /**
+     * Selector only: the input address wired to each position (index 0 = position 1).
+     * Turning the selector to a position sets that position's input to 1 and the others to 0.
+     * A blank entry means that position has no input (e.g. a centre / off position).
+     * When every entry is blank the selector falls back to the legacy single [tagAddress]
+     * that holds the position number.
+     */
+    val positionTags: List<String> = emptyList()
+) {
+    /** Number of selector positions (2 or 3). */
+    val positionCount: Int get() = positions.coerceIn(2, 3)
+
+    /** Address wired to selector position [index], or "" when that position has no input. */
+    fun positionAddress(index: Int): String = positionTags.getOrNull(index)?.trim().orEmpty()
+
+    /** True when this selector has its own input per position. */
+    val hasPositionTags: Boolean
+        get() = kind == ComponentKind.SELECTOR && (0 until positionCount).any { positionAddress(it).isNotBlank() }
+
+    /** Every PLC address this part reads or writes. */
+    val allAddresses: List<String>
+        get() = when {
+            hasPositionTags -> (0 until positionCount).map { positionAddress(it) }.filter { it.isNotBlank() }
+            tagAddress.isNotBlank() -> listOf(tagAddress)
+            else -> emptyList()
+        }
+
+    /** True when the part is wired to at least one tag. */
+    val isWired: Boolean get() = allAddresses.isNotEmpty()
+
+    /** Short text listing the part's addresses, e.g. "M0.1 · M0.2". */
+    val tagSummary: String get() = allAddresses.joinToString(" · ")
+}
 
 @Serializable
 data class Panel(

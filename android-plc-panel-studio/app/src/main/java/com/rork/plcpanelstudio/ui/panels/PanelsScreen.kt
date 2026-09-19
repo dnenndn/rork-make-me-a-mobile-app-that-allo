@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -207,8 +208,8 @@ private fun PanelCard(
             PanelThumbnail(
                 row = row,
                 modifier = Modifier
-                    .width(120.dp)
-                    .height(122.dp)
+                    .width(180.dp)
+                    .aspectRatio(1.5f)
             )
             Spacer(Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
@@ -293,33 +294,9 @@ private fun PanelThumbnail(row: PanelRow, modifier: Modifier = Modifier) {
         Image(
             painter = painterResource(coverRes(row.panel.cover)),
             contentDescription = null,
-            contentScale = ContentScale.Crop,
+            contentScale = ContentScale.Fit,
             modifier = Modifier.fillMaxSize()
         )
-        Box(
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .fillMaxWidth()
-                .background(Ink.copy(alpha = 0.78f))
-                .padding(horizontal = 8.dp, vertical = 6.dp)
-        ) {
-            Column {
-                Text(
-                    text = row.panel.name.take(12).uppercase(),
-                    style = NameplateStyle,
-                    fontSize = 9.sp,
-                    color = TextMid,
-                    maxLines = 1
-                )
-                val partCount = row.panel.components.size
-                Text(
-                    text = if (partCount == 0) "EMPTY" else "$partCount PARTS",
-                    style = NameplateStyle,
-                    fontSize = 9.sp,
-                    color = TextLow
-                )
-            }
-        }
         Box(
             modifier = Modifier
                 .align(Alignment.TopEnd)

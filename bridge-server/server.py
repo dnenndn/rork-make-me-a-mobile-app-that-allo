@@ -1,39 +1,4 @@
-"""
-PLC Panel Studio — LAN bridge server (Python 3, zero required dependencies).
 
-Run (demo PLC, no hardware):
-    python server.py
-
-Run against a REAL Siemens PLC over PROFINET/Ethernet (S7 protocol):
-    python server.py --plc 192.168.0.1
-    (or:  set PLC_IP=192.168.0.1  then  python server.py  on Windows CMD)
-
-The phone cannot speak PROFINET directly — this bridge sits on the LAN next
-to the PLC, translates S7comm into the app's simple HTTP contract, and serves
-it on port 8080 by default.
-
-Contract (must match PlcProtocol.kt in the Android app):
-  GET  /api/health              -> {ok, cpu, ioOk, ioTotal, uptime}
-  POST /api/read   {addresses}  -> {values: {address: int}}
-  POST /api/write  {address, value} -> {ok, value}
-
-Supported tag addresses (map them in the app's Assign Tag sheet):
-  Bits:    I12.0 (input)   Q8.1 (output)   M10.3 (merker/flag)
-  Words:   IW64  QW66  MW20
-  Double:  MD40
-  Data blocks: DB10.DBX2.3 (bit)  DB10.DBW4 (word)  DB10.DBD6 (dword)
-
-Demo PLC (default): same seal-in start/stop ladder logic as the app's
-built-in simulator — any non-stop input > 0 latches the motor ON, any
-"stop"-like input (name contains "stop" or ends in ".4") drops it, and
-MW/AW/QW analogue addresses animate while the motor runs.
-
-Siemens notes (S7-1200 / S7-1500):
-  - In TIA Portal, enable "Permit access with PUT/GET communication from
-    remote partner" in the PLC's Protection & Security settings.
-  - Rack 0 / Slot 1 is typical for 1200/1500 (S7-300/400 often 0/2).
-  - The snap7 package is only needed for a real PLC:  pip install python-snap7
-"""
 
 import argparse
 import json
@@ -278,6 +243,8 @@ def make_driver():
 
 def _parse_cli():
     parser = argparse.ArgumentParser(description="PLC Panel Studio LAN bridge")
+    parser.add_argument("--port", type=int, default=PORT,
+                        help=f"HTTP port for the bridge (default: {PORT})")
     parser.add_argument("--plc", default=os.environ.get("PLC_IP", ""),
                         help="IP of the Siemens PLC (enables the S7/PROFINET driver)")
     parser.add_argument("--rack", type=int, default=int(os.environ.get("PLC_RACK", "0")))
@@ -360,14 +327,23 @@ class BridgeHandler(BaseHTTPRequestHandler):
 
 def main():
     global DRIVER
+    args = _parse_cli()
     DRIVER = make_driver()
-    server = ThreadingHTTPServer(("0.0.0.0", PORT), BridgeHandler)
-    print(f"PLC bridge listening on port {PORT}  (driver: {DRIVER.name})")
+    try:
+        server = ThreadingHTTPServer(("0.0.0.0", args.port), BridgeHandler)
+    except OSError as error:
+        if getattr(error, "winerror", None) == 10013 or getattr(error, "errno", None) in (98, 13):
+            raise SystemExit(
+                f"Cannot listen on port {args.port}. It is already in use or blocked. "
+                f"Try: python server.py --port {args.port + 1}"
+            ) from error
+        raise
+    print(f"PLC bridge listening on port {args.port}  (driver: {DRIVER.name})")
     if DRIVER.name == "s7":
         print(f"  Target PLC: {DRIVER.ip} (rack {DRIVER.rack}, slot {DRIVER.slot})")
     for ip in _lan_addresses():
-        print(f"  Add this device in the app ->  {ip}:{PORT}")
-    print(f"  (local)                    ->  localhost:{PORT}")
+        print(f"  Add this device in the app ->  {ip}:{args.port}")
+    print(f"  (local)                    ->  localhost:{args.port}")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

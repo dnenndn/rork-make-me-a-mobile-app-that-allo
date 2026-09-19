@@ -88,11 +88,16 @@ import kotlinx.coroutines.delay
 import kotlin.math.hypot
 import kotlin.math.roundToInt
 
+// The old canvas-drawn Button and Gauge are no longer offered in the library. They stay in the
+// ComponentKind enum so panels that already contain them keep working.
 private val PALETTE_KINDS = listOf(
-    ComponentKind.BUTTON,
     ComponentKind.SELECTOR,
     ComponentKind.LAMP,
-    ComponentKind.GAUGE
+    ComponentKind.LAMP_RED,
+    ComponentKind.LAMP_GREEN,
+    ComponentKind.STOP,
+    ComponentKind.GREEN,
+    ComponentKind.YELLOW
 )
 
 /** Transient drag payload: either a new part from the rail or an existing placed part. */
@@ -369,7 +374,7 @@ fun EditorScreen(
     if (showProperties && selected != null) {
         ComponentPropertiesSheet(
             component = selected,
-            suggestAddress = { direction -> viewModel.suggestAddress(direction) },
+            suggestAddress = { direction, exclude -> viewModel.suggestAddress(direction, exclude) },
             onDismiss = { showProperties = false },
             onApply = { updated ->
                 viewModel.updateComponent(updated)
@@ -569,6 +574,7 @@ private fun FreeCanvas(
                             HardwareFace(
                                 kind = component.kind,
                                 active = isSelected,
+                                selectorPositions = component.positions,
                                 modifier = Modifier.size(46.dp)
                             )
                             Spacer(Modifier.height(4.dp))
@@ -580,9 +586,9 @@ private fun FreeCanvas(
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
-                            if (component.tagAddress.isNotBlank()) {
+                            if (component.isWired) {
                                 Text(
-                                    text = component.tagAddress,
+                                    text = component.tagSummary,
                                     fontFamily = MonoFamily,
                                     fontSize = 10.sp,
                                     color = SignalOrange,
@@ -647,7 +653,7 @@ private fun PreviewCanvas(
                     HardwareUnit(
                         kind = component.kind,
                         label = component.label,
-                        caption = component.tagAddress.ifBlank { "NO TAG" },
+                        caption = component.tagSummary.ifBlank { "NO TAG" },
                         active = false,
                         modifier = Modifier
                             .offset {

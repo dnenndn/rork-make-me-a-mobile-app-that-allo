@@ -16,6 +16,8 @@ val SignalTeal = Color(0xFF3DDC97)
 val SignalTealDim = Color(0xFF17513A)
 val SignalRed = Color(0xFFE4002B)
 val SignalAmber = Color(0xFFFFB020)
+val SignalGreen = Color(0xFF22C55E)
+val SignalYellow = Color(0xFFFFC21A)
 
 val Steel = Color(0xFF39434B)
 val SteelDark = Color(0xFF222A30)

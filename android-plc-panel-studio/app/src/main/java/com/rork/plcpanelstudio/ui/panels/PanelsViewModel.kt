@@ -18,7 +18,7 @@ data class PanelRow(
     val panel: Panel,
     val device: PlcDevice?
 ) {
-    val tagCount: Int get() = panel.components.count { it.tagAddress.isNotBlank() }
+    val tagCount: Int get() = panel.components.count { it.isWired }
     val status: DeviceStatus get() = device?.status ?: DeviceStatus.UNKNOWN
 }
 

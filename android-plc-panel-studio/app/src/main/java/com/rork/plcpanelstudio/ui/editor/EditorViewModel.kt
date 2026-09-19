@@ -87,7 +87,12 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
             kind = kind,
             col = snap(x),
             row = snap(y),
-            label = "${kind.displayName} $index",
+            // Plate parts print their label on the plate, so use a neutral default name.
+            label = when {
+                kind.isPlateButton -> "Button $index"
+                kind.isLamp -> "Lamp $index"
+                else -> "${kind.displayName} $index"
+            },
             tagAddress = "",
             direction = kind.defaultDirection,
             positions = if (kind == ComponentKind.SELECTOR) 2 else 1
@@ -158,11 +163,11 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     /** Suggests the next free address for a direction, e.g. M0.3 or Q0.1. */
-    fun suggestAddress(direction: IoDirection): String {
+    fun suggestAddress(direction: IoDirection, exclude: Set<String> = emptySet()): String {
         val panel = _uiState.value.panel ?: return if (direction == IoDirection.INPUT) "M0.0" else "Q0.0"
         val prefix = if (direction == IoDirection.INPUT) "M0." else "Q0."
-        val used = panel.components.mapNotNull { component ->
-            component.tagAddress.takeIf { it.startsWith(prefix) }?.removePrefix(prefix)?.toIntOrNull()
+        val used = (panel.components.flatMap { it.allAddresses } + exclude).mapNotNull { address ->
+            address.takeIf { it.startsWith(prefix) }?.removePrefix(prefix)?.toIntOrNull()
         }.toSet()
         val next = (0..255).firstOrNull { it !in used } ?: 0
         return "$prefix$next"

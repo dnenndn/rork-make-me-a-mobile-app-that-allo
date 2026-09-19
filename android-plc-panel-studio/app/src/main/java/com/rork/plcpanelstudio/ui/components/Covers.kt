@@ -7,6 +7,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -38,11 +39,11 @@ data class PanelCover(
 )
 
 /** Catalog of built-in cover pictures (bundled in res/drawable-nodpi). */
+private const val COVER_ASPECT_RATIO = 1.5f
+
 val PANEL_COVERS: List<PanelCover> = listOf(
-    PanelCover("logo", "Studio", R.drawable.logo),
     PanelCover("preparation", "Clay crusher", R.drawable.preparation),
     PanelCover("mouleuse", "Molding", R.drawable.mouleuse),
-    PanelCover("coupeur", "Cutter", R.drawable.coupeur),
     PanelCover("multicoupeur", "Multi cutter", R.drawable.multicoupeur),
     PanelCover("dryer", "Dryer", R.drawable.dryer),
     PanelCover("kiln", "Tunnel kiln", R.drawable.kiln),
@@ -51,10 +52,14 @@ val PANEL_COVERS: List<PanelCover> = listOf(
     PanelCover("packet", "Packaging", R.drawable.packet)
 )
 
-/** Resolves a stored cover id to a drawable, falling back to the studio logo. */
+/** Resolves a stored cover id to a drawable, falling back to the app logo image. */
 @DrawableRes
 fun coverRes(coverId: String?): Int =
-    PANEL_COVERS.firstOrNull { it.id == coverId }?.res ?: R.drawable.logo
+    when {
+        coverId == "logo" -> R.drawable.logo
+        PANEL_COVERS.any { it.id == coverId } -> PANEL_COVERS.first { it.id == coverId }.res
+        else -> R.drawable.logo
+    }
 
 /** One selectable cover thumbnail used in the create dialog and panel settings. */
 @Composable
@@ -65,12 +70,13 @@ fun CoverTile(
     modifier: Modifier = Modifier
 ) {
     Column(
-        modifier = modifier.width(92.dp),
+        modifier = modifier.width(100.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Box(
             modifier = Modifier
-                .size(92.dp)
+                .width(100.dp)
+                .aspectRatio(COVER_ASPECT_RATIO)
                 .clip(RoundedCornerShape(10.dp))
                 .background(Ink)
                 .border(
@@ -83,7 +89,7 @@ fun CoverTile(
             Image(
                 painter = painterResource(item.res),
                 contentDescription = item.label,
-                contentScale = ContentScale.Crop,
+                contentScale = ContentScale.Fit,
                 modifier = Modifier.fillMaxSize()
             )
         }
