@@ -60,6 +60,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.rork.plcpanelstudio.data.ComponentKind
+import com.rork.plcpanelstudio.R
 import com.rork.plcpanelstudio.data.DeviceStatus
 import com.rork.plcpanelstudio.data.PlcDevice
 import com.rork.plcpanelstudio.ui.components.CoverTile
@@ -101,7 +102,19 @@ fun PanelsScreen(
         containerColor = Ink,
         topBar = {
             TopAppBar(
-                title = { Text("Panels", style = MaterialTheme.typography.headlineMedium) },
+                title = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        // The app logo, so it is visible inside the app and not only on the home screen.
+                        Image(
+                            painter = painterResource(R.drawable.app_logo),
+                            contentDescription = "PLC Panel Studio",
+                            contentScale = ContentScale.Fit,
+                            modifier = Modifier.size(38.dp)
+                        )
+                        Spacer(Modifier.width(10.dp))
+                        Text("Panels", style = MaterialTheme.typography.headlineMedium)
+                    }
+                },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = Ink)
             )
         },
