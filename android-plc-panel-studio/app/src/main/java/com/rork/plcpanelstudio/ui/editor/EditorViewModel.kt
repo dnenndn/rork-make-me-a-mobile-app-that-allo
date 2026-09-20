@@ -4,10 +4,11 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.rork.plcpanelstudio.data.ComponentKind
-import com.rork.plcpanelstudio.data.IoDirection
 import com.rork.plcpanelstudio.data.Panel
 import com.rork.plcpanelstudio.data.PanelComponent
 import com.rork.plcpanelstudio.data.PlcDevice
+import com.rork.plcpanelstudio.data.MAX_TAG_BYTE
+import com.rork.plcpanelstudio.data.TagArea
 import com.rork.plcpanelstudio.data.WorkspaceRepository
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -162,15 +163,22 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         _uiState.value = _uiState.value.copy(panel = panel, selectedId = null, dirty = false)
     }
 
-    /** Suggests the next free address for a direction, e.g. M0.3 or Q0.1. */
-    fun suggestAddress(direction: IoDirection, exclude: Set<String> = emptySet()): String {
-        val panel = _uiState.value.panel ?: return if (direction == IoDirection.INPUT) "M0.0" else "Q0.0"
-        val prefix = if (direction == IoDirection.INPUT) "M0." else "Q0."
-        val used = (panel.components.flatMap { it.allAddresses } + exclude).mapNotNull { address ->
-            address.takeIf { it.startsWith(prefix) }?.removePrefix(prefix)?.toIntOrNull()
-        }.toSet()
-        val next = (0..255).firstOrNull { it !in used } ?: 0
-        return "$prefix$next"
+    /**
+     * Suggests the next free bit address in [area], e.g. M0.3 or Q0.1. Bits run 0..7 inside each
+     * byte, so the search walks byte by byte and returns the first address no part uses yet.
+     */
+    fun suggestAddress(area: TagArea, exclude: Set<String> = emptySet()): String {
+        val panel = _uiState.value.panel ?: return "${area.prefix}0.0"
+        val used = (panel.components.flatMap { it.allAddresses } + exclude)
+            .map { it.trim().uppercase() }
+            .toSet()
+        for (byte in 0..MAX_TAG_BYTE) {
+            for (bit in 0..7) {
+                val candidate = "${area.prefix}$byte.$bit"
+                if (candidate !in used) return candidate
+            }
+        }
+        return "${area.prefix}0.0"
     }
 
     private fun mutate(panel: Panel) {

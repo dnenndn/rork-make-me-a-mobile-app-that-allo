@@ -3,6 +3,7 @@ package com.rork.plcpanelstudio.ui.editor
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -59,6 +60,13 @@ import com.rork.plcpanelstudio.data.IoDirection
 import com.rork.plcpanelstudio.data.Panel
 import com.rork.plcpanelstudio.data.PanelComponent
 import com.rork.plcpanelstudio.data.PlcDevice
+import com.rork.plcpanelstudio.data.TagArea
+import com.rork.plcpanelstudio.data.defaultAreaFor
+import com.rork.plcpanelstudio.data.directionFor
+import com.rork.plcpanelstudio.data.filterTagBody
+import com.rork.plcpanelstudio.data.isValidTagBody
+import com.rork.plcpanelstudio.data.parseTagAddress
+import com.rork.plcpanelstudio.data.tagAddressOf
 import com.rork.plcpanelstudio.ui.components.CoverTile
 import com.rork.plcpanelstudio.ui.components.HardwareFace
 import com.rork.plcpanelstudio.ui.components.PANEL_COVERS
@@ -77,25 +85,48 @@ import kotlin.math.roundToInt
 @Composable
 fun ComponentPropertiesSheet(
     component: PanelComponent,
-    suggestAddress: (IoDirection, Set<String>) -> String,
+    suggestAddress: (TagArea, Set<String>) -> String,
     onDismiss: () -> Unit,
     onApply: (PanelComponent) -> Unit,
     onDelete: () -> Unit
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val isSelector = component.kind == ComponentKind.SELECTOR
+    val isGauge = component.kind == ComponentKind.GAUGE
+
     var label by remember(component.id) { mutableStateOf(component.label) }
-    var address by remember(component.id) { mutableStateOf(component.tagAddress) }
-    var direction by remember(component.id) { mutableStateOf(component.direction) }
     var momentary by remember(component.id) { mutableStateOf(component.momentary) }
     var positions by remember(component.id) { mutableIntStateOf(component.positions.coerceIn(2, 3)) }
     var scaleMax by remember(component.id) { mutableStateOf(component.scaleMax.toString()) }
-    // Selector: one input address per position (up to 3 fields are kept while editing).
-    var positionTags by remember(component.id) {
-        mutableStateOf(List(3) { component.positionAddress(it) })
+
+    // A gauge reads a whole word (e.g. MW20), so it keeps the free-form address field.
+    var wordAddress by remember(component.id) { mutableStateOf(component.tagAddress) }
+    var gaugeDirection by remember(component.id) { mutableStateOf(component.direction) }
+
+    // Bit parts: the area (Input / Output / Memory) is chosen with chips and the user only
+    // types the "byte.bit" part, so the stored address is always I3.4 / Q3.2 / M5.4 shaped.
+    var area by remember(component.id) {
+        mutableStateOf(
+            TagArea.of(component.allAddresses.firstOrNull().orEmpty())
+                ?: defaultAreaFor(component.kind, component.direction)
+        )
     }
-    val isSelector = component.kind == ComponentKind.SELECTOR
-    val typedPositionTags = positionTags.take(positions).map { it.trim() }.filter { it.isNotBlank() }
-    val hasDuplicateInputs = isSelector && typedPositionTags.size != typedPositionTags.toSet().size
+    var body by remember(component.id) {
+        mutableStateOf(parseTagAddress(component.tagAddress)?.body.orEmpty())
+    }
+    var positionBodies by remember(component.id) {
+        mutableStateOf(List(3) { parseTagAddress(component.positionAddress(it))?.body.orEmpty() })
+    }
+
+    val bodyInvalid = body.isNotBlank() && !isValidTagBody(body)
+    val typedPositions = positionBodies.take(positions).map { it.trim() }.filter { it.isNotBlank() }
+    val positionsInvalid = typedPositions.any { !isValidTagBody(it) }
+    val hasDuplicateInputs = isSelector && typedPositions.size != typedPositions.toSet().size
+    val canApply = when {
+        isSelector -> !hasDuplicateInputs && !positionsInvalid
+        isGauge -> true
+        else -> !bodyInvalid
+    }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -129,63 +160,80 @@ fun ComponentPropertiesSheet(
                 }
             }
 
-            if (!isSelector) {
-            Spacer(Modifier.height(18.dp))
-            SectionLabel("Signal direction")
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                IoDirection.entries.forEach { option ->
-                    FilterChip(
-                        selected = direction == option,
-                        onClick = {
-                            direction = option
-                            if (address.isBlank()) address = suggestAddress(option, emptySet())
-                        },
-                        label = { Text(option.displayName) },
-                        colors = FilterChipDefaults.filterChipColors(
-                            selectedContainerColor = SignalOrange.copy(alpha = 0.18f),
-                            selectedLabelColor = SignalOrange
+            if (isGauge) {
+                // ---- Gauge: word address, kept free-form -------------------------------
+                Spacer(Modifier.height(18.dp))
+                SectionLabel("Signal direction")
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    IoDirection.entries.forEach { option ->
+                        FilterChip(
+                            selected = gaugeDirection == option,
+                            onClick = { gaugeDirection = option },
+                            label = { Text(option.displayName) },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = SignalOrange.copy(alpha = 0.18f),
+                                selectedLabelColor = SignalOrange
+                            )
                         )
-                    )
-                }
-            }
-            Text(
-                text = if (direction == IoDirection.INPUT) {
-                    "Tapping this part writes to the PLC so you can prove the wiring."
-                } else {
-                    "Read-only: the part mirrors the PLC output state."
-                },
-                style = MaterialTheme.typography.bodySmall,
-                color = TextLow,
-                modifier = Modifier.padding(top = 6.dp)
-            )
-
-            Spacer(Modifier.height(16.dp))
-            SectionLabel("Tag Address")
-            OutlinedTextField(
-                value = address,
-                onValueChange = { address = it.uppercase() },
-                placeholder = { Text("e.g. M0.3, I0.0, Q0.1, MW20") },
-                singleLine = true,
-                textStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = MonoFamily),
-                trailingIcon = {
-                    if (address.isNotEmpty()) {
-                        IconButton(onClick = { address = "" }) {
-                            Icon(Icons.Default.Clear, contentDescription = "Clear address")
-                        }
                     }
-                },
-                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Characters),
-                modifier = Modifier.fillMaxWidth()
-            )
-            Row(
-                modifier = Modifier.padding(top = 6.dp),
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                TextButton(onClick = { address = suggestAddress(direction, emptySet()) }) {
+                }
+
+                Spacer(Modifier.height(16.dp))
+                SectionLabel("Word address")
+                OutlinedTextField(
+                    value = wordAddress,
+                    onValueChange = { wordAddress = it.uppercase() },
+                    placeholder = { Text("e.g. MW20, IW4, QW8") },
+                    singleLine = true,
+                    textStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = MonoFamily),
+                    supportingText = {
+                        Text(
+                            "A gauge reads a whole word, so it is not a byte.bit address.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = TextLow
+                        )
+                    },
+                    trailingIcon = {
+                        if (wordAddress.isNotEmpty()) {
+                            IconButton(onClick = { wordAddress = "" }) {
+                                Icon(Icons.Default.Clear, contentDescription = "Clear address")
+                            }
+                        }
+                    },
+                    keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Characters),
+                    modifier = Modifier.fillMaxWidth()
+                )
+            } else if (!isSelector) {
+                // ---- Buttons and lamps: one bit address --------------------------------
+                Spacer(Modifier.height(18.dp))
+                SectionLabel("Signal type")
+                TagAreaChips(selected = area, onSelect = { area = it })
+                Text(
+                    text = when (area) {
+                        TagArea.INPUT -> "Input (I): a signal coming from the field into the PLC."
+                        TagArea.OUTPUT -> "Output (Q): read-only, the part mirrors the PLC output."
+                        TagArea.MEMORY -> "Memory (M): an internal bit of the PLC program."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = TextLow,
+                    modifier = Modifier.padding(top = 6.dp)
+                )
+
+                Spacer(Modifier.height(16.dp))
+                SectionLabel("Tag Address")
+                TagBodyField(
+                    area = area,
+                    body = body,
+                    onBodyChange = { body = it },
+                    isError = bodyInvalid,
+                    label = null
+                )
+                TextButton(
+                    onClick = { body = suggestAddress(area, emptySet()).removePrefix(area.prefix) },
+                    modifier = Modifier.padding(top = 2.dp)
+                ) {
                     Text("Suggest next free", fontSize = 12.sp)
                 }
-            }
-
             }
 
             Spacer(Modifier.height(10.dp))
@@ -242,6 +290,10 @@ fun ComponentPropertiesSheet(
                     }
 
                     Spacer(Modifier.height(16.dp))
+                    SectionLabel("Signal type")
+                    TagAreaChips(selected = area, onSelect = { area = it })
+
+                    Spacer(Modifier.height(16.dp))
                     SectionLabel("Input for each position")
                     Text(
                         "Turning the selector to a position sets that position's input to 1 and " +
@@ -251,42 +303,34 @@ fun ComponentPropertiesSheet(
                     )
                     for (index in 0 until positions) {
                         Spacer(Modifier.height(8.dp))
-                        OutlinedTextField(
-                            value = positionTags[index],
-                            onValueChange = { text ->
-                                positionTags = positionTags.toMutableList().also { it[index] = text.uppercase() }
+                        val positionBody = positionBodies[index]
+                        TagBodyField(
+                            area = area,
+                            body = positionBody,
+                            onBodyChange = { value ->
+                                positionBodies = positionBodies.toMutableList().also { it[index] = value }
                             },
-                            label = { Text("Position ${index + 1}") },
-                            placeholder = { Text("e.g. M0.$index") },
-                            singleLine = true,
-                            isError = hasDuplicateInputs && positionTags[index].isNotBlank() &&
-                                typedPositionTags.count { it == positionTags[index].trim() } > 1,
-                            textStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = MonoFamily),
-                            trailingIcon = {
-                                if (positionTags[index].isNotEmpty()) {
-                                    IconButton(onClick = {
-                                        positionTags = positionTags.toMutableList().also { it[index] = "" }
-                                    }) {
-                                        Icon(Icons.Default.Clear, contentDescription = "Clear position ${index + 1} input")
-                                    }
-                                }
-                            },
-                            keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Characters),
-                            modifier = Modifier.fillMaxWidth()
+                            isError = (positionBody.isNotBlank() && !isValidTagBody(positionBody)) ||
+                                (hasDuplicateInputs && positionBody.isNotBlank() &&
+                                    typedPositions.count { it == positionBody.trim() } > 1),
+                            label = "Position ${index + 1}"
                         )
                     }
                     TextButton(
                         onClick = {
-                            val next = positionTags.toMutableList()
-                            val taken = next.take(positions).filter { it.isNotBlank() }.toMutableSet()
+                            val next = positionBodies.toMutableList()
+                            val taken = next.take(positions)
+                                .filter { it.isNotBlank() }
+                                .map { tagAddressOf(area, it) }
+                                .toMutableSet()
                             for (index in 0 until positions) {
                                 if (next[index].isBlank()) {
-                                    val suggestion = suggestAddress(IoDirection.INPUT, taken)
-                                    next[index] = suggestion
+                                    val suggestion = suggestAddress(area, taken)
+                                    next[index] = suggestion.removePrefix(area.prefix)
                                     taken += suggestion
                                 }
                             }
-                            positionTags = next
+                            positionBodies = next
                         },
                         modifier = Modifier.padding(top = 4.dp)
                     ) {
@@ -338,21 +382,26 @@ fun ComponentPropertiesSheet(
                             component.copy(
                                 label = label.ifBlank { component.kind.displayName },
                                 tagAddress = when {
-                                    isSelector && typedPositionTags.isNotEmpty() -> ""
+                                    isGauge -> wordAddress.trim().uppercase()
+                                    isSelector && typedPositions.isNotEmpty() -> ""
                                     isSelector -> component.tagAddress
-                                    else -> address.trim()
+                                    else -> tagAddressOf(area, body)
                                 },
-                                direction = if (isSelector) IoDirection.INPUT else direction,
+                                direction = when {
+                                    isGauge -> gaugeDirection
+                                    isSelector -> IoDirection.INPUT
+                                    else -> directionFor(component.kind, area)
+                                },
                                 momentary = momentary,
                                 positions = positions,
-                                positionTags = if (isSelector && typedPositionTags.isNotEmpty()) {
-                                    positionTags.take(positions).map { it.trim() }
+                                positionTags = if (isSelector && typedPositions.isNotEmpty()) {
+                                    positionBodies.take(positions).map { tagAddressOf(area, it) }
                                 } else emptyList(),
                                 scaleMax = scaleMax.toIntOrNull()?.coerceAtLeast(1) ?: 100
                             )
                         )
                     },
-                    enabled = !hasDuplicateInputs,
+                    enabled = canApply,
                     colors = ButtonDefaults.buttonColors(
                         containerColor = SignalOrange,
                         contentColor = Ink
@@ -364,6 +413,82 @@ fun ComponentPropertiesSheet(
             }
         }
     }
+}
+
+/** Input / Output / Memory picker; the choice decides the letter in front of the address. */
+@Composable
+private fun TagAreaChips(selected: TagArea, onSelect: (TagArea) -> Unit) {
+    Row(
+        modifier = Modifier.horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        TagArea.entries.forEach { option ->
+            FilterChip(
+                selected = selected == option,
+                onClick = { onSelect(option) },
+                label = { Text("${option.displayName} (${option.prefix})") },
+                colors = FilterChipDefaults.filterChipColors(
+                    selectedContainerColor = SignalOrange.copy(alpha = 0.18f),
+                    selectedLabelColor = SignalOrange
+                )
+            )
+        }
+    }
+}
+
+/**
+ * Field for the "byte.bit" part of an address. The area letter is shown as a fixed prefix and
+ * the typed text is filtered down to digits and a single dot, so the result can only ever be
+ * something like 3.4 — giving I3.4, Q3.2 or M5.4 once the area is put in front.
+ */
+@Composable
+private fun TagBodyField(
+    area: TagArea,
+    body: String,
+    onBodyChange: (String) -> Unit,
+    isError: Boolean,
+    label: String?
+) {
+    val fieldLabel: (@Composable () -> Unit)? = label?.let { text -> { Text(text) } }
+    OutlinedTextField(
+        value = body,
+        onValueChange = { onBodyChange(filterTagBody(it)) },
+        label = fieldLabel,
+        prefix = {
+            Text(
+                area.prefix,
+                fontFamily = MonoFamily,
+                color = if (isError) SignalRed else SignalOrange,
+                fontWeight = FontWeight.Bold
+            )
+        },
+        placeholder = { Text("3.4") },
+        singleLine = true,
+        isError = isError,
+        supportingText = {
+            Text(
+                text = if (body.isBlank()) {
+                    "Byte and bit separated by a dot, e.g. ${area.prefix}3.4"
+                } else if (isValidTagBody(body)) {
+                    "Address: ${tagAddressOf(area, body)}"
+                } else {
+                    "Incomplete: use byte.bit, e.g. ${area.prefix}3.4 (bit 0-7)"
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = if (isError) SignalRed else TextLow
+            )
+        },
+        textStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = MonoFamily),
+        trailingIcon = {
+            if (body.isNotEmpty()) {
+                IconButton(onClick = { onBodyChange("") }) {
+                    Icon(Icons.Default.Clear, contentDescription = "Clear address")
+                }
+            }
+        },
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+        modifier = Modifier.fillMaxWidth()
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
