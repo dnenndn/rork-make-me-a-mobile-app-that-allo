@@ -38,17 +38,43 @@ class DevicesViewModel(application: Application) : AndroidViewModel(application)
         _uiState.value = _uiState.value.copy(message = null)
     }
 
-    fun addDevice(name: String, host: String, port: Int, simulated: Boolean) {
+    fun addDevice(
+        name: String,
+        host: String,
+        port: Int,
+        simulated: Boolean,
+        fallbackHost: String = "",
+        fallbackPort: Int = 0
+    ) {
         val device = PlcDevice(
             id = "dev-${UUID.randomUUID()}",
             name = name.ifBlank { "PLC $host" },
             host = host.trim(),
             port = port,
             simulated = simulated,
-            status = DeviceStatus.UNKNOWN
+            status = DeviceStatus.UNKNOWN,
+            fallbackHost = fallbackHost.trim(),
+            fallbackPort = fallbackPort
         )
         repository.upsertDevice(device)
         testConnection(device.id)
+    }
+
+    /** Changes a device's addresses in place, so panels keep pointing at it. */
+    fun updateAddresses(id: String, host: String, port: Int, fallbackHost: String, fallbackPort: Int) {
+        val device = repository.device(id) ?: return
+        repository.upsertDevice(
+            device.copy(
+                host = host.trim(),
+                port = port,
+                fallbackHost = fallbackHost.trim(),
+                fallbackPort = fallbackPort,
+                status = DeviceStatus.UNKNOWN,
+                lastError = null,
+                usingBackup = false
+            )
+        )
+        testConnection(id)
     }
 
     fun updateDevice(device: PlcDevice) {

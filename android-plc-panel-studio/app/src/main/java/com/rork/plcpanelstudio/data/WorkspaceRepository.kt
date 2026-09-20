@@ -99,7 +99,8 @@ class WorkspaceRepository private constructor(context: Context) {
                     ioOk = result.data.ioOk,
                     ioTotal = result.data.ioTotal,
                     uptime = result.data.uptime,
-                    lastError = null
+                    lastError = null,
+                    usingBackup = result.viaBackup
                 )
             )
             is BridgeResult.Failure -> upsertDevice(
@@ -110,7 +111,8 @@ class WorkspaceRepository private constructor(context: Context) {
                     ioOk = null,
                     ioTotal = null,
                     uptime = null,
-                    lastError = result.reason
+                    lastError = result.reason,
+                    usingBackup = false
                 )
             )
         }

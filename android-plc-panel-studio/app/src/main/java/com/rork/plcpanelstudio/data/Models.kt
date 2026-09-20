@@ -176,9 +176,25 @@ data class PlcDevice(
     val ioOk: Int? = null,
     val ioTotal: Int? = null,
     val uptime: String? = null,
-    val lastError: String? = null
+    val lastError: String? = null,
+    /** Optional second address (e.g. a Tailscale address), tried when the main one does not answer. */
+    val fallbackHost: String = "",
+    /** Port of the backup address; 0 means the same port as the main address. */
+    val fallbackPort: Int = 0,
+    /** True while the last successful connection went through the backup address. */
+    val usingBackup: Boolean = false
 ) {
     val endpoint: String get() = "$host:$port"
+
+    val hasBackup: Boolean get() = fallbackHost.isNotBlank()
+
+    val backupEndpoint: String get() = "$fallbackHost:${if (fallbackPort > 0) fallbackPort else port}"
+
+    /** Addresses to try: the main one first, then the backup if there is one. */
+    fun endpoints(): List<Endpoint> = buildList {
+        add(Endpoint(host, port))
+        if (hasBackup) add(Endpoint(fallbackHost, if (fallbackPort > 0) fallbackPort else port))
+    }
 }
 
 @Serializable

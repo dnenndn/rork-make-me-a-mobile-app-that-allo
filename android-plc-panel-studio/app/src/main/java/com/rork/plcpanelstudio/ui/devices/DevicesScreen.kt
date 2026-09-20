@@ -35,7 +35,9 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
@@ -57,7 +59,9 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.rork.plcpanelstudio.data.DeviceStatus
+import com.rork.plcpanelstudio.data.EndpointParser
 import com.rork.plcpanelstudio.data.PlcDevice
+import com.rork.plcpanelstudio.data.connectionHint
 import com.rork.plcpanelstudio.ui.components.StatusDot
 import com.rork.plcpanelstudio.ui.panels.statusColor
 import com.rork.plcpanelstudio.ui.theme.Ink
@@ -86,6 +90,18 @@ fun DevicesScreen(
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     var showAdd by remember { mutableStateOf(false) }
+    var editing by remember { mutableStateOf<PlcDevice?>(null) }
+
+    editing?.let { device ->
+        EditAddressesDialog(
+            device = device,
+            onDismiss = { editing = null },
+            onSave = { host, port, fallbackHost, fallbackPort ->
+                viewModel.updateAddresses(device.id, host, port, fallbackHost, fallbackPort)
+                editing = null
+            }
+        )
+    }
 
     Scaffold(
         containerColor = Ink,
@@ -116,6 +132,7 @@ fun DevicesScreen(
                     device = device,
                     testing = device.id in state.testingIds,
                     onTest = { viewModel.testConnection(device.id) },
+                    onEdit = { editing = device },
                     onDelete = { viewModel.deleteDevice(device.id) },
                     onToggleSimulated = {
                         viewModel.updateDevice(
@@ -129,8 +146,8 @@ fun DevicesScreen(
                 AddDeviceCard(
                     expanded = showAdd || state.devices.isEmpty(),
                     onToggle = { showAdd = !showAdd },
-                    onAdd = { name, host, port, simulated ->
-                        viewModel.addDevice(name, host, port, simulated)
+                    onAdd = { name, host, port, simulated, backupHost, backupPort ->
+                        viewModel.addDevice(name, host, port, simulated, backupHost, backupPort)
                         showAdd = false
                     }
                 )
@@ -147,6 +164,7 @@ private fun DeviceCard(
     device: PlcDevice,
     testing: Boolean,
     onTest: () -> Unit,
+    onEdit: () -> Unit,
     onDelete: () -> Unit,
     onToggleSimulated: () -> Unit
 ) {
@@ -192,6 +210,10 @@ private fun DeviceCard(
                                 onClick = { menuOpen = false; onTest() }
                             )
                             DropdownMenuItem(
+                                text = { Text("Edit addresses") },
+                                onClick = { menuOpen = false; onEdit() }
+                            )
+                            DropdownMenuItem(
                                 text = {
                                     Text(if (device.simulated) "Use real bridge" else "Use built-in simulator")
                                 },
@@ -210,13 +232,22 @@ private fun DeviceCard(
                     fontFamily = MonoFamily,
                     color = TextMid
                 )
+                if (device.hasBackup) {
+                    Text(
+                        text = "Backup ${device.backupEndpoint}",
+                        style = MaterialTheme.typography.bodySmall,
+                        fontFamily = MonoFamily,
+                        color = TextLow
+                    )
+                }
                 Spacer(Modifier.height(4.dp))
                 Text(
                     text = buildString {
                         append(
                             when {
                                 device.status == DeviceStatus.CONNECTED && device.pingMs != null ->
-                                    "Ping ${device.pingMs}ms"
+                                    "Ping ${device.pingMs}ms" +
+                                        if (device.usingBackup) " · via backup address" else ""
                                 device.lastError != null -> device.lastError
                                 else -> "Not tested"
                             }
@@ -231,6 +262,17 @@ private fun DeviceCard(
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis
                 )
+                if (device.status == DeviceStatus.OFFLINE && !device.simulated) {
+                    connectionHint(device.lastError)?.let { hint ->
+                        Spacer(Modifier.height(2.dp))
+                        Text(
+                            text = hint,
+                            style = MaterialTheme.typography.bodySmall,
+                            fontSize = 11.sp,
+                            color = TextMid
+                        )
+                    }
+                }
                 Spacer(Modifier.height(10.dp))
                 HorizontalDivider(color = Line)
                 Spacer(Modifier.height(8.dp))
@@ -354,11 +396,14 @@ private fun RackGraphic(status: DeviceStatus, modifier: Modifier = Modifier) {
 private fun AddDeviceCard(
     expanded: Boolean,
     onToggle: () -> Unit,
-    onAdd: (String, String, Int, Boolean) -> Unit
+    onAdd: (String, String, Int, Boolean, String, Int) -> Unit
 ) {
     var name by remember { mutableStateOf("") }
     var host by remember { mutableStateOf("192.168.1.40") }
-    var port by remember { mutableStateOf("502") }
+    // The bridge server listens on 8080 unless it was started with --port.
+    var port by remember { mutableStateOf(EndpointParser.DEFAULT_PORT.toString()) }
+    var hostError by remember { mutableStateOf<String?>(null) }
+    var backup by remember { mutableStateOf("") }
     var simulated by remember { mutableStateOf(false) }
 
     Card(
@@ -396,11 +441,16 @@ private fun AddDeviceCard(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     OutlinedTextField(
                         value = host,
-                        onValueChange = { host = it.filter { ch -> ch.isDigit() || ch == '.' } },
+                        // Allow ":" and "/" so an address such as 192.168.1.129:8081 can be pasted whole.
+                        onValueChange = {
+                            host = it.filter { ch -> ch.isLetterOrDigit() || ch in ".-_:/" }
+                            hostError = null
+                        },
                         label = { Text("IP Address") },
                         singleLine = true,
+                        isError = hostError != null,
                         textStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = MonoFamily),
-                        keyboardOptions = KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number),
+                        keyboardOptions = KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Uri),
                         modifier = Modifier.weight(2f)
                     )
                     Spacer(Modifier.width(10.dp))
@@ -414,6 +464,32 @@ private fun AddDeviceCard(
                         modifier = Modifier.weight(1f)
                     )
                 }
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    hostError ?: "Type the bridge's address and port, or paste it as printed, e.g. 192.168.1.129:8081.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (hostError != null) SignalRed else TextLow
+                )
+                Spacer(Modifier.height(10.dp))
+                OutlinedTextField(
+                    value = backup,
+                    onValueChange = {
+                        backup = it.filter { ch -> ch.isLetterOrDigit() || ch in ".-_:/" }
+                        hostError = null
+                    },
+                    label = { Text("Backup address (optional)") },
+                    placeholder = { Text("e.g. your Tailscale address") },
+                    singleLine = true,
+                    textStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = MonoFamily),
+                    keyboardOptions = KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Uri),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "Used automatically when the main address doesn't answer. Leave the port out to use the same port.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = TextLow
+                )
                 Spacer(Modifier.height(12.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(modifier = Modifier.weight(1f)) {
@@ -432,7 +508,21 @@ private fun AddDeviceCard(
                 }
                 Spacer(Modifier.height(14.dp))
                 Button(
-                    onClick = { onAdd(name, host, port.toIntOrNull() ?: 502, simulated) },
+                    onClick = {
+                        val endpoint = EndpointParser.parse(host, port)
+                        val backupEndpoint = if (backup.isBlank()) null
+                        else EndpointParser.parse(backup, "", defaultPort = endpoint?.port ?: EndpointParser.DEFAULT_PORT)
+                        if (endpoint == null) {
+                            hostError = "That address isn't valid. Use something like 192.168.1.129 or 192.168.1.129:8081."
+                        } else if (backup.isNotBlank() && backupEndpoint == null) {
+                            hostError = "The backup address isn't valid. Use something like 100.67.101.121 or 100.67.101.121:8081."
+                        } else {
+                            onAdd(
+                                name, endpoint.host, endpoint.port, simulated,
+                                backupEndpoint?.host.orEmpty(), backupEndpoint?.port ?: 0
+                            )
+                        }
+                    },
                     enabled = host.isNotBlank(),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = SignalOrange,
@@ -482,4 +572,89 @@ private fun BridgeHelpCard() {
             }
         }
     }
+}
+
+/** Changes a device's main and backup addresses without removing it, so panels stay linked. */
+@Composable
+private fun EditAddressesDialog(
+    device: PlcDevice,
+    onDismiss: () -> Unit,
+    onSave: (host: String, port: Int, fallbackHost: String, fallbackPort: Int) -> Unit
+) {
+    var main by remember(device.id) { mutableStateOf(device.endpoint) }
+    var backup by remember(device.id) { mutableStateOf(if (device.hasBackup) device.backupEndpoint else "") }
+    var error by remember(device.id) { mutableStateOf<String?>(null) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = Surface2,
+        title = { Text("Edit addresses") },
+        text = {
+            Column {
+                Text(
+                    "The main address is tried first. If it doesn't answer, the backup address is used, " +
+                        "for example your Tailscale address.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = TextMid
+                )
+                Spacer(Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = main,
+                    onValueChange = {
+                        main = it.filter { ch -> ch.isLetterOrDigit() || ch in ".-_:/" }
+                        error = null
+                    },
+                    label = { Text("Main address") },
+                    placeholder = { Text("192.168.137.1:8081") },
+                    singleLine = true,
+                    textStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = MonoFamily),
+                    keyboardOptions = KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Uri),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(Modifier.height(10.dp))
+                OutlinedTextField(
+                    value = backup,
+                    onValueChange = {
+                        backup = it.filter { ch -> ch.isLetterOrDigit() || ch in ".-_:/" }
+                        error = null
+                    },
+                    label = { Text("Backup address (optional)") },
+                    placeholder = { Text("100.67.101.121:8081") },
+                    singleLine = true,
+                    textStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = MonoFamily),
+                    keyboardOptions = KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Uri),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                error?.let {
+                    Spacer(Modifier.height(8.dp))
+                    Text(it, style = MaterialTheme.typography.bodySmall, color = SignalRed)
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    val mainEndpoint = EndpointParser.parse(main, "")
+                    val backupEndpoint = if (backup.isBlank()) null
+                    else EndpointParser.parse(backup, "", defaultPort = mainEndpoint?.port ?: EndpointParser.DEFAULT_PORT)
+                    if (mainEndpoint == null) {
+                        error = "The main address isn't valid. Use something like 192.168.137.1:8081."
+                    } else if (backup.isNotBlank() && backupEndpoint == null) {
+                        error = "The backup address isn't valid. Use something like 100.67.101.121:8081."
+                    } else {
+                        onSave(
+                            mainEndpoint.host, mainEndpoint.port,
+                            backupEndpoint?.host.orEmpty(), backupEndpoint?.port ?: 0
+                        )
+                    }
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = SignalOrange, contentColor = Ink)
+            ) {
+                Text("Save", fontWeight = FontWeight.Bold)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel", color = SignalOrange) }
+        }
+    )
 }
