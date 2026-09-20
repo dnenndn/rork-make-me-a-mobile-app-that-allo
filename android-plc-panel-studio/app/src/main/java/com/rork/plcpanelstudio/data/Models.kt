@@ -114,6 +114,19 @@ data class PanelComponent(
     /** True when the part is wired to at least one tag. */
     val isWired: Boolean get() = allAddresses.isNotEmpty()
 
+    /**
+     * True for the parts an operator pushes or turns: buttons and selectors used as inputs.
+     * Lamps, gauges and parts set to "Output" only display and are never locked.
+     */
+    val isOperatorControl: Boolean
+        get() = direction == IoDirection.INPUT && (kind.isPushButton || kind == ComponentKind.SELECTOR)
+
+    /**
+     * True when the part must not react to the operator right now. Every operator control is
+     * locked until the password is entered, whether or not it already has a tag assigned.
+     */
+    fun isLocked(controlUnlocked: Boolean): Boolean = isOperatorControl && !controlUnlocked
+
     /** Short text listing the part's addresses, e.g. "M0.1 · M0.2". */
     val tagSummary: String get() = allAddresses.joinToString(" · ")
 }

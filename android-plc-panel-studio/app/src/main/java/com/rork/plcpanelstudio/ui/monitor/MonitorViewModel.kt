@@ -5,6 +5,7 @@ import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.rork.plcpanelstudio.data.BridgeResult
+import com.rork.plcpanelstudio.data.ControlLock
 import com.rork.plcpanelstudio.data.ComponentKind
 import com.rork.plcpanelstudio.data.DeviceStatus
 import com.rork.plcpanelstudio.data.IoDirection
@@ -12,7 +13,11 @@ import com.rork.plcpanelstudio.data.Panel
 import com.rork.plcpanelstudio.data.PanelComponent
 import com.rork.plcpanelstudio.data.PlcDevice
 import com.rork.plcpanelstudio.data.TagReading
+import com.rork.plcpanelstudio.data.TagValueStore
 import com.rork.plcpanelstudio.data.WorkspaceRepository
+import com.rork.plcpanelstudio.data.errorMessage
+import com.rork.plcpanelstudio.data.selectorWritePlan
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -20,6 +25,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 private const val TAG = "MonitorViewModel"
 private const val POLL_INTERVAL_MS = 700L
@@ -35,7 +41,11 @@ data class MonitorUiState(
     val pingMs: Int? = null,
     val error: String? = null,
     val pressedIds: Set<String> = emptySet(),
-    val forcedIds: Set<String> = emptySet()
+    val forcedIds: Set<String> = emptySet(),
+    /** True while the operator controls (buttons, selectors, force) may be used. */
+    val controlUnlocked: Boolean = false,
+    /** True once a control password has been created. */
+    val hasControlPassword: Boolean = false
 )
 
 class MonitorViewModel(application: Application) : AndroidViewModel(application) {
@@ -45,8 +55,18 @@ class MonitorViewModel(application: Application) : AndroidViewModel(application)
     private val _uiState = MutableStateFlow(MonitorUiState())
     val uiState: StateFlow<MonitorUiState> = _uiState.asStateFlow()
 
+    /** Values shown on screen: what the PLC reports, plus our own writes until the PLC confirms them. */
+    private val tags = TagValueStore()
+
+    /** Password protection for everything that writes to the PLC. */
+    private val controlLock = ControlLock.get(application)
+
     private var pollJob: Job? = null
     private var panelId: String? = null
+
+    init {
+        publishControlState()
+    }
 
     fun start(id: String) {
         panelId = id
@@ -54,6 +74,7 @@ class MonitorViewModel(application: Application) : AndroidViewModel(application)
         pollJob?.cancel()
         pollJob = viewModelScope.launch {
             while (isActive) {
+                publishControlState() // also picks up the lock timing out by itself
                 poll()
                 delay(POLL_INTERVAL_MS)
             }
@@ -68,6 +89,7 @@ class MonitorViewModel(application: Application) : AndroidViewModel(application)
 
     override fun onCleared() {
         super.onCleared()
+        controlLock.lock()
         stop()
     }
 
@@ -97,10 +119,13 @@ class MonitorViewModel(application: Application) : AndroidViewModel(application)
             return
         }
 
+        val pollStartedAt = tags.now()
         when (val result = repository.bridge.read(device, addresses)) {
             is BridgeResult.Success -> {
-                repository.cacheValues(device.id, result.data)
-                val merged = _uiState.value.values.toMutableMap().apply { putAll(result.data) }
+                // A reply that predates one of our own writes must not put the old value back.
+                val applied = tags.applyPoll(result.data, pollStartedAt)
+                repository.cacheValues(device.id, applied)
+                val merged = tags.values
                 _uiState.value = _uiState.value.copy(
                     values = merged,
                     readings = buildReadings(panel, merged),
@@ -163,6 +188,8 @@ class MonitorViewModel(application: Application) : AndroidViewModel(application)
     /** Press-and-hold on a momentary input writes 1, release writes 0. */
     fun onPressDown(component: PanelComponent) {
         if (component.direction != IoDirection.INPUT) return
+        // Locked: nothing is pressed and nothing is written.
+        if (!canControl()) return
         markPressed(component.id, true)
         if (component.kind.isPushButton && component.momentary) {
             write(component, 1)
@@ -172,6 +199,7 @@ class MonitorViewModel(application: Application) : AndroidViewModel(application)
     /** The selector knob was turned to [position]; write it to the tag. */
     fun setSelector(component: PanelComponent, position: Int) {
         if (component.kind != ComponentKind.SELECTOR || component.direction != IoDirection.INPUT) return
+        if (!canControl()) return
         val target = position.coerceIn(0, component.positionCount - 1)
         if (component.hasPositionTags) {
             writeSelectorPosition(component, target)
@@ -187,49 +215,60 @@ class MonitorViewModel(application: Application) : AndroidViewModel(application)
      * active at the same time on the PLC.
      */
     private fun writeSelectorPosition(component: PanelComponent, target: Int) {
+        if (!controlLock.isUnlocked) return
         val device = _uiState.value.device ?: return
-        val tags = (0 until component.positionCount).map { component.positionAddress(it) }
-        if (tags.none { it.isNotBlank() }) return
-
-        // Optimistic update so the knob and glow react instantly.
-        val optimistic = _uiState.value.values.toMutableMap()
-        tags.forEachIndexed { index, tag ->
-            if (tag.isNotBlank()) optimistic[tag] = if (index == target) 1 else 0
-        }
-        val panel = _uiState.value.panel
-        _uiState.value = _uiState.value.copy(
-            values = optimistic,
-            readings = panel?.let { buildReadings(it, optimistic) } ?: _uiState.value.readings
+        val plan = selectorWritePlan(
+            (0 until component.positionCount).map { component.positionAddress(it) },
+            target
         )
+        if (plan.isEmpty()) return
+
+        // Show the new position at once; each input then takes the value the PLC confirms.
+        plan.forEach { (address, value) -> tags.beginWrite(address, value) }
+        publishValues()
 
         viewModelScope.launch {
-            val writes = tags.withIndex()
-                .filter { it.value.isNotBlank() }
-                .sortedBy { if (it.index == target) 1 else 0 }
-            for ((index, tag) in writes) {
-                val value = if (index == target) 1 else 0
-                when (val result = repository.bridge.write(device, tag, value)) {
-                    is BridgeResult.Success -> repository.cacheValues(device.id, mapOf(tag to result.data))
-                    is BridgeResult.Failure -> {
-                        Log.w(TAG, "Write to $tag failed: ${result.reason}")
-                        _uiState.value = _uiState.value.copy(error = "Write failed: ${result.reason}")
-                        return@launch
+            val pending = plan.map { it.first }.toMutableList()
+            try {
+                for ((address, value) in plan) {
+                    val result = repository.bridge.write(device, address, value)
+                    pending.remove(address)
+                    when (result) {
+                        is BridgeResult.Success -> {
+                            tags.endWrite(address, result.data)
+                            publishValues()
+                            repository.cacheValues(device.id, mapOf(address to result.data))
+                        }
+                        is BridgeResult.Failure -> {
+                            tags.endWrite(address, null)
+                            Log.w(TAG, "Write to $address failed: ${result.reason}")
+                            _uiState.value = _uiState.value.copy(error = "Write failed: ${result.reason}")
+                            return@launch
+                        }
                     }
                 }
+            } finally {
+                // Writes that never ran (after a failure) are no longer in flight.
+                pending.forEach { tags.endWrite(it, null) }
             }
         }
     }
 
     fun onPressUp(component: PanelComponent) {
+        val wasPressed = component.id in _uiState.value.pressedIds
         markPressed(component.id, false)
-        if (component.direction != IoDirection.INPUT) return
+        if (component.direction != IoDirection.INPUT || !wasPressed) return
         when {
-            component.kind.isPushButton && component.momentary -> write(component, 0)
+            // A momentary button that was pressed must always be released, even if the lock
+            // timed out while it was held; otherwise the PLC input would stay at 1.
+            component.kind.isPushButton && component.momentary -> write(component, 0, bypassLock = true)
             component.kind.isPushButton -> {
+                if (!canControl()) return
                 val next = if ((_uiState.value.values[component.tagAddress] ?: 0) > 0) 0 else 1
                 write(component, next)
             }
             component.kind == ComponentKind.SELECTOR -> {
+                if (!canControl()) return
                 val current = _uiState.value.values[component.tagAddress] ?: 0
                 val next = (current + 1) % component.positions.coerceAtLeast(2)
                 write(component, next)
@@ -245,6 +284,7 @@ class MonitorViewModel(application: Application) : AndroidViewModel(application)
      * driving that address, the next scan cycle can overwrite it again.
      */
     fun forceWrite(component: PanelComponent, value: Int) {
+        if (!canControl()) return
         val device = _uiState.value.device ?: return
         if (component.tagAddress.isBlank()) return
         _uiState.value = _uiState.value.copy(forcedIds = _uiState.value.forcedIds + component.id)
@@ -263,28 +303,83 @@ class MonitorViewModel(application: Application) : AndroidViewModel(application)
         )
     }
 
-    private fun write(component: PanelComponent, value: Int) {
+    private fun write(component: PanelComponent, value: Int, bypassLock: Boolean = false) {
+        // Last line of defence: no write reaches the PLC while locked (except releasing a held button).
+        if (!bypassLock && !controlLock.isUnlocked) return
         val device = _uiState.value.device ?: return
-        if (component.tagAddress.isBlank()) return
-        // Optimistic update so the glow reacts instantly to the touch.
-        val optimistic = _uiState.value.values.toMutableMap()
-            .apply { put(component.tagAddress, value) }
-        val panel = _uiState.value.panel
-        _uiState.value = _uiState.value.copy(
-            values = optimistic,
-            readings = panel?.let { buildReadings(it, optimistic) } ?: _uiState.value.readings
-        )
+        val address = component.tagAddress
+        if (address.isBlank()) return
+        // Show the new value at once; the value the PLC confirms replaces it when the write returns.
+        tags.beginWrite(address, value)
+        publishValues()
         viewModelScope.launch {
-            when (val result = repository.bridge.write(device, component.tagAddress, value)) {
-                is BridgeResult.Success -> repository.cacheValues(
-                    device.id,
-                    mapOf(component.tagAddress to result.data)
-                )
+            when (val result = repository.bridge.write(device, address, value)) {
+                is BridgeResult.Success -> {
+                    tags.endWrite(address, result.data)
+                    publishValues()
+                    repository.cacheValues(device.id, mapOf(address to result.data))
+                }
                 is BridgeResult.Failure -> {
-                    Log.w(TAG, "Write to ${component.tagAddress} failed: ${result.reason}")
+                    tags.endWrite(address, null)
+                    Log.w(TAG, "Write to $address failed: ${result.reason}")
                     _uiState.value = _uiState.value.copy(error = "Write failed: ${result.reason}")
                 }
             }
         }
+    }
+
+    /** Pushes the values held in [tags] to the UI state. */
+    private fun publishValues() {
+        val state = _uiState.value
+        val values = tags.values
+        _uiState.value = state.copy(
+            values = values,
+            readings = state.panel?.let { buildReadings(it, values) } ?: state.readings
+        )
+    }
+
+    // ------------------------------------------------------------------ control lock
+
+    /** Checks the lock before a control is used; using a control keeps the session open. */
+    private fun canControl(): Boolean {
+        val allowed = controlLock.isUnlocked
+        if (allowed) controlLock.touch()
+        publishControlState()
+        return allowed
+    }
+
+    private fun publishControlState() {
+        val unlocked = controlLock.isUnlocked
+        val hasPassword = controlLock.hasPassword
+        val state = _uiState.value
+        if (state.controlUnlocked != unlocked || state.hasControlPassword != hasPassword) {
+            _uiState.value = state.copy(controlUnlocked = unlocked, hasControlPassword = hasPassword)
+        }
+    }
+
+    /** Unlocks the controls. Returns an error message to show, or null when unlocked. */
+    suspend fun unlockControl(password: String): String? {
+        val result = withContext(Dispatchers.Default) { controlLock.unlock(password) }
+        publishControlState()
+        return result.errorMessage()
+    }
+
+    /** Creates the first password (and unlocks). Returns an error message, or null. */
+    suspend fun createControlPassword(password: String, confirm: String): String? {
+        val error = withContext(Dispatchers.Default) { controlLock.createPassword(password, confirm) }
+        publishControlState()
+        return error
+    }
+
+    /** Changes the password. Returns an error message, or null. */
+    suspend fun changeControlPassword(current: String, new: String, confirm: String): String? {
+        val error = withContext(Dispatchers.Default) { controlLock.changePassword(current, new, confirm) }
+        publishControlState()
+        return error
+    }
+
+    fun lockControl() {
+        controlLock.lock()
+        publishControlState()
     }
 }

@@ -189,8 +189,9 @@ private fun PlateButtonFace(
     label: String,
     modifier: Modifier = Modifier
 ) {
-    // Glow while the signal is live OR while the finger is down, so the press is
-    // visible instantly even before the PLC echoes the value back.
+    // The glow shows the state of the input: lit while it is set, dark once it is reset.
+    // A press does not light it by itself; the shown value is updated the moment the write
+    // is sent and then follows what the PLC reports.
     val glow = glowColorFor(kind)
     val capRes = when (kind) {
         ComponentKind.GREEN -> R.drawable.green_button_cap
@@ -198,7 +199,7 @@ private fun PlateButtonFace(
         else -> R.drawable.stop_button_cap
     }
     val intensity by animateFloatAsState(
-        targetValue = if (active || pressed) 1f else 0f,
+        targetValue = if (active) 1f else 0f,
         animationSpec = tween(durationMillis = 80),
         label = "stopGlow"
     )

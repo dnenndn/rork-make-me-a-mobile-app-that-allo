@@ -1,5 +1,8 @@
 package com.rork.plcpanelstudio.ui.monitor
 
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -14,14 +17,19 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -36,6 +44,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -50,6 +59,7 @@ import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -57,6 +67,8 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.rork.plcpanelstudio.data.ComponentKind
@@ -99,9 +111,46 @@ fun MonitorScreen(
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val haptics = LocalHapticFeedback.current
     var forceTarget by remember { mutableStateOf<PanelComponent?>(null) }
+    var passwordDialog by remember { mutableStateOf<PasswordDialogMode?>(null) }
+    var lockMenuOpen by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+
+    /** Asks for the password (or to create one on first use). */
+    fun requestUnlock() {
+        passwordDialog = if (state.hasControlPassword) PasswordDialogMode.UNLOCK else PasswordDialogMode.CREATE
+    }
 
     LaunchedEffect(panelId) { viewModel.start(panelId) }
-    DisposableEffect(Unit) { onDispose { viewModel.stop() } }
+    // Leaving the screen locks the controls again (but not when the screen only rotates).
+    DisposableEffect(Unit) {
+        onDispose {
+            viewModel.stop()
+            if (context.findActivity()?.isChangingConfigurations != true) viewModel.lockControl()
+        }
+    }
+    // Sending the app to the background locks them too.
+    LifecycleEventEffect(Lifecycle.Event.ON_STOP) {
+        if (context.findActivity()?.isChangingConfigurations != true) viewModel.lockControl()
+    }
+
+    passwordDialog?.let { mode ->
+        key(mode) {
+            PasswordDialog(
+                mode = mode,
+                onDismiss = { passwordDialog = null },
+                onSubmit = { current, new, confirm ->
+                    when (mode) {
+                        PasswordDialogMode.UNLOCK -> viewModel.unlockControl(current)
+                        PasswordDialogMode.CREATE -> viewModel.createControlPassword(new, confirm)
+                        PasswordDialogMode.CHANGE -> viewModel.changeControlPassword(current, new, confirm)
+                    }
+                },
+                onWantChange = if (mode == PasswordDialogMode.UNLOCK) {
+                    ({ passwordDialog = PasswordDialogMode.CHANGE })
+                } else null
+            )
+        }
+    }
 
     forceTarget?.let { component ->
         ForceOutputDialog(
@@ -109,9 +158,14 @@ fun MonitorScreen(
             currentValue = state.values[component.tagAddress] ?: 0,
             onDismiss = { forceTarget = null },
             onForce = { value ->
-                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                viewModel.forceWrite(component, value)
                 forceTarget = null
+                if (state.controlUnlocked) {
+                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                    viewModel.forceWrite(component, value)
+                } else {
+                    // The lock timed out while the dialog was open.
+                    requestUnlock()
+                }
             },
             onRelease = {
                 viewModel.releaseForce(component)
@@ -144,6 +198,38 @@ fun MonitorScreen(
                     }
                 },
                 actions = {
+                    Box {
+                        IconButton(
+                            onClick = {
+                                if (state.controlUnlocked) lockMenuOpen = true else requestUnlock()
+                            }
+                        ) {
+                            Icon(
+                                imageVector = if (state.controlUnlocked) Icons.Default.LockOpen else Icons.Default.Lock,
+                                contentDescription = if (state.controlUnlocked) "Controls unlocked" else "Controls locked",
+                                tint = if (state.controlUnlocked) SignalTeal else TextMid
+                            )
+                        }
+                        DropdownMenu(
+                            expanded = lockMenuOpen,
+                            onDismissRequest = { lockMenuOpen = false }
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("Lock controls") },
+                                onClick = {
+                                    lockMenuOpen = false
+                                    viewModel.lockControl()
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Change password") },
+                                onClick = {
+                                    lockMenuOpen = false
+                                    passwordDialog = PasswordDialogMode.CHANGE
+                                }
+                            )
+                        }
+                    }
                     IconButton(onClick = { onEdit(panelId) }) {
                         Icon(Icons.Default.Edit, contentDescription = "Edit panel")
                     }
@@ -209,8 +295,10 @@ fun MonitorScreen(
                                 onSelectorChange = { position -> viewModel.setSelector(component, position) },
                                 onForceRequest = {
                                     haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                                    forceTarget = component
+                                    if (state.controlUnlocked) forceTarget = component else requestUnlock()
                                 },
+                                controlEnabled = state.controlUnlocked,
+                                onLockedTouch = { requestUnlock() },
                                 modifier = Modifier
                                     .offset {
                                         IntOffset(
@@ -246,6 +334,8 @@ private fun LiveComponent(
     forceable: Boolean = false,
     onForceRequest: () -> Unit = {},
     onSelectorChange: (Int) -> Unit = {},
+    controlEnabled: Boolean = true,
+    onLockedTouch: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     // Selector state. A selector wired with one input per position reports which contact is
@@ -281,8 +371,11 @@ private fun LiveComponent(
         localSelector = position
         if (wired) onSelectorChange(position)
     }
+    // Every button and selector is locked until the password is entered, tag or no tag:
+    // a locked part does not move, does not light up and does not turn.
+    val locked = component.isLocked(controlEnabled)
     val selectorCallback: ((Int) -> Unit)? =
-        if (component.kind == ComponentKind.SELECTOR && component.direction == IoDirection.INPUT) {
+        if (component.kind == ComponentKind.SELECTOR && component.direction == IoDirection.INPUT && !locked) {
             onSelectorTurn
         } else null
 
@@ -292,8 +385,13 @@ private fun LiveComponent(
     val isPushInput = component.kind.isPushButton && component.direction == IoDirection.INPUT
 
     // Press-and-hold semantics: write on touch down, release on lift.
+    // Each branch has its own key so the handler is replaced when the lock state changes.
     val interactionModifier = when {
-        interactive && component.kind != ComponentKind.SELECTOR -> Modifier.pointerInput(component.id) {
+        // Locked: touching the part only asks for the password.
+        locked -> Modifier.pointerInput(component.id, "locked") {
+            detectTapGestures(onTap = { onLockedTouch() })
+        }
+        interactive && component.kind != ComponentKind.SELECTOR -> Modifier.pointerInput(component.id, "control") {
             awaitEachGesture {
                 awaitFirstDown(requireUnconsumed = false)
                 localPressed = true
@@ -303,7 +401,7 @@ private fun LiveComponent(
                 onPressUp()
             }
         }
-        isPushInput -> Modifier.pointerInput(component.id) {
+        isPushInput -> Modifier.pointerInput(component.id, "local-press") {
             awaitEachGesture {
                 awaitFirstDown(requireUnconsumed = false)
                 localPressed = true
@@ -313,27 +411,42 @@ private fun LiveComponent(
         }
         // Outputs (lamps/gauges) aren't pressed like a control — long-press instead opens
         // a "Force" dialog, mirroring the force-table concept from real PLC HMIs.
-        forceable -> Modifier.pointerInput(component.id) {
+        forceable -> Modifier.pointerInput(component.id, "force") {
             detectTapGestures(onLongPress = { onForceRequest() })
         }
         else -> Modifier
     }
 
-    HardwareUnit(
-        kind = component.kind,
-        label = component.label,
-        caption = caption,
-        active = active,
-        analogValue = if (component.kind == ComponentKind.GAUGE) {
-            value.toFloat() / component.scaleMax.coerceAtLeast(1).toFloat()
-        } else 0f,
-        selectorPosition = shownSelectorPosition,
-        selectorPositions = component.positionCount,
-        pressed = pressed || localPressed,
-        forced = forced,
-        onSelectorChange = selectorCallback,
-        modifier = modifier.then(interactionModifier)
-    )
+    Box(modifier = modifier.then(interactionModifier)) {
+        HardwareUnit(
+            kind = component.kind,
+            label = component.label,
+            caption = caption,
+            // A button without a tag has no input to show, so light it while it is touched.
+            active = active || (!wired && localPressed && component.kind.isPushButton),
+            analogValue = if (component.kind == ComponentKind.GAUGE) {
+                value.toFloat() / component.scaleMax.coerceAtLeast(1).toFloat()
+            } else 0f,
+            selectorPosition = shownSelectorPosition,
+            selectorPositions = component.positionCount,
+            pressed = pressed || localPressed,
+            forced = forced,
+            onSelectorChange = selectorCallback,
+            modifier = Modifier.fillMaxWidth()
+        )
+        // Small padlock so it is obvious why the part does not react.
+        if (locked) {
+            Icon(
+                imageVector = Icons.Default.Lock,
+                contentDescription = "Locked",
+                tint = TextMid,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(2.dp)
+                    .size(14.dp)
+            )
+        }
+    }
 }
 
 /** Bottom-sheet-style dialog to force a value onto an output tag for bench testing. */
@@ -533,3 +646,10 @@ private fun IoStatesPanel(
 
 private fun formatClock(millis: Long): String =
     "Today, " + SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(millis))
+
+/** The Activity behind a Compose [Context], or null. */
+private tailrec fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findActivity()
+    else -> null
+}
