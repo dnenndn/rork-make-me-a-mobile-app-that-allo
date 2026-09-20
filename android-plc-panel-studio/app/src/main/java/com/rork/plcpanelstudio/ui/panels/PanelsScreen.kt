@@ -18,6 +18,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -63,6 +66,7 @@ import com.rork.plcpanelstudio.data.ComponentKind
 import com.rork.plcpanelstudio.R
 import com.rork.plcpanelstudio.data.DeviceStatus
 import com.rork.plcpanelstudio.data.PlcDevice
+import com.rork.plcpanelstudio.ui.components.CoverHolderColor
 import com.rork.plcpanelstudio.ui.components.CoverTile
 import com.rork.plcpanelstudio.ui.components.HardwareFace
 import com.rork.plcpanelstudio.ui.components.PANEL_COVERS
@@ -137,7 +141,9 @@ fun PanelsScreen(
                     .padding(bottom = contentPadding.calculateBottomPadding())
             )
         } else {
-            LazyColumn(
+            // One big card per row on a phone; more columns automatically on wide screens.
+            LazyVerticalGrid(
+                columns = GridCells.Adaptive(minSize = 320.dp),
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(
                     start = 16.dp,
@@ -145,7 +151,8 @@ fun PanelsScreen(
                     top = inner.calculateTopPadding() + 4.dp,
                     bottom = contentPadding.calculateBottomPadding() + 96.dp
                 ),
-                verticalArrangement = Arrangement.spacedBy(14.dp)
+                verticalArrangement = Arrangement.spacedBy(14.dp),
+                horizontalArrangement = Arrangement.spacedBy(14.dp)
             ) {
                 items(state.rows, key = { it.panel.id }) { row ->
                     PanelCard(
@@ -217,15 +224,15 @@ private fun PanelCard(
             .fillMaxWidth()
             .border(1.dp, Line, RoundedCornerShape(14.dp))
     ) {
-        Row(modifier = Modifier.padding(12.dp)) {
+        Column {
+            // The cover fills the whole top of the card: a full-width square, like the pictures.
             PanelThumbnail(
                 row = row,
                 modifier = Modifier
-                    .width(180.dp)
-                    .aspectRatio(1.5f)
+                    .fillMaxWidth()
+                    .aspectRatio(1f)
             )
-            Spacer(Modifier.width(12.dp))
-            Column(modifier = Modifier.weight(1f)) {
+            Column(modifier = Modifier.padding(14.dp)) {
                 Row(verticalAlignment = Alignment.Top) {
                     Text(
                         text = row.panel.name,
@@ -299,10 +306,7 @@ private fun PanelCard(
 @Composable
 private fun PanelThumbnail(row: PanelRow, modifier: Modifier = Modifier) {
     Box(
-        modifier = modifier
-            .clip(RoundedCornerShape(10.dp))
-            .background(Ink)
-            .border(1.dp, Line, RoundedCornerShape(10.dp))
+        modifier = modifier.background(CoverHolderColor)
     ) {
         Image(
             painter = painterResource(coverRes(row.panel.cover)),

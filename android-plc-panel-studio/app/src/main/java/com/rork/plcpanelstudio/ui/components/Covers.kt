@@ -18,6 +18,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextOverflow
@@ -39,7 +40,11 @@ data class PanelCover(
 )
 
 /** Catalog of built-in cover pictures (bundled in res/drawable-nodpi). */
-private const val COVER_ASPECT_RATIO = 1.5f
+/** The cover pictures are square, so their holder is square too and the picture fills it. */
+private const val COVER_ASPECT_RATIO = 1f
+
+/** Holder colour behind a cover: the same navy as the pictures, so any thin margin is invisible. */
+val CoverHolderColor = Color(0xFF00263F)
 
 val PANEL_COVERS: List<PanelCover> = listOf(
     PanelCover("preparation", "Clay crusher", R.drawable.preparation),
@@ -78,7 +83,7 @@ fun CoverTile(
                 .width(100.dp)
                 .aspectRatio(COVER_ASPECT_RATIO)
                 .clip(RoundedCornerShape(10.dp))
-                .background(Ink)
+                .background(CoverHolderColor)
                 .border(
                     width = 2.dp,
                     color = if (selected) SignalOrange else Line,
