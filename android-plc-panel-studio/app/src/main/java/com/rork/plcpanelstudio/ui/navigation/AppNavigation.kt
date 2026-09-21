@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.Memory
+import androidx.compose.material.icons.filled.SettingsInputComponent
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -23,6 +24,7 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.rork.plcpanelstudio.ui.devices.DevicesScreen
 import com.rork.plcpanelstudio.ui.editor.EditorScreen
+import com.rork.plcpanelstudio.ui.iostatus.IoStatusScreen
 import com.rork.plcpanelstudio.ui.monitor.MonitorScreen
 import com.rork.plcpanelstudio.ui.panels.PanelsScreen
 import com.rork.plcpanelstudio.ui.theme.Ink
@@ -37,6 +39,7 @@ private data class TabItem(
 
 private val TABS = listOf(
     TabItem("panels", "Panels", Icons.Default.GridView),
+    TabItem("io", "I/O", Icons.Default.SettingsInputComponent),
     TabItem("devices", "Devices", Icons.Default.Memory)
 )
 
@@ -100,6 +103,9 @@ fun AppNavigation() {
                     onBack = { navController.popBackStack() },
                     contentPadding = inner
                 )
+            }
+            composable("io") {
+                IoStatusScreen(contentPadding = inner)
             }
             composable("devices") {
                 DevicesScreen(contentPadding = inner)

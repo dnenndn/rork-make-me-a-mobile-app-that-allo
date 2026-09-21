@@ -134,7 +134,16 @@ data class Panel(
     val components: List<PanelComponent>,
     val updatedAtMillis: Long,
     /** Id of the cover picture shown in the panels list (see ui.components.PANEL_COVERS). */
-    val cover: String = "logo"
+    val cover: String = "logo",
+    /** Memory bits (M area) the user added to watch in the I/O view, next to the panel's own tags. */
+    val watchedMemory: List<WatchedTag> = emptyList()
+)
+
+/** A memory bit added by hand to a panel's I/O view, with an optional name, e.g. M0.5 "Cycle done". */
+@Serializable
+data class WatchedTag(
+    val address: String,
+    val name: String = ""
 )
 
 @Serializable

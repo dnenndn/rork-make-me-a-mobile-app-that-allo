@@ -48,6 +48,29 @@ class WorkspaceRepository private constructor(context: Context) {
         }
     }
 
+    /** Adds a memory bit to watch on a panel. An address that is already watched is ignored. */
+    fun addWatchedMemory(panelId: String, tag: WatchedTag) {
+        update { current ->
+            current.copy(
+                panels = current.panels.map { panel ->
+                    if (panel.id != panelId || panel.watchedMemory.any { it.address == tag.address }) panel
+                    else panel.copy(watchedMemory = panel.watchedMemory + tag)
+                }
+            )
+        }
+    }
+
+    fun removeWatchedMemory(panelId: String, address: String) {
+        update { current ->
+            current.copy(
+                panels = current.panels.map { panel ->
+                    if (panel.id != panelId) panel
+                    else panel.copy(watchedMemory = panel.watchedMemory.filterNot { it.address == address })
+                }
+            )
+        }
+    }
+
     fun setActivePanel(id: String) {
         update { it.copy(activePanelId = id) }
     }
