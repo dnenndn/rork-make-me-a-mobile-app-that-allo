@@ -155,7 +155,6 @@ fun MonitorScreen(
     forceTarget?.let { component ->
         ForceOutputDialog(
             component = component,
-            currentValue = state.values[component.tagAddress] ?: 0,
             onDismiss = { forceTarget = null },
             onForce = { value ->
                 forceTarget = null
@@ -354,7 +353,6 @@ private fun LiveComponent(
     val active = if (multiSelector) activePositionIndex >= 0 else value > 0
     val caption = when {
         !wired -> "NO TAG"
-        component.kind == ComponentKind.GAUGE -> "$value / ${component.scaleMax}"
         multiSelector -> {
             val address = component.positionAddress(shownSelectorPosition)
             "POS ${shownSelectorPosition + 1}" + if (address.isNotBlank()) " · $address" else ""
@@ -424,9 +422,6 @@ private fun LiveComponent(
             caption = caption,
             // A button without a tag has no input to show, so light it while it is touched.
             active = active || (!wired && localPressed && component.kind.isPushButton),
-            analogValue = if (component.kind == ComponentKind.GAUGE) {
-                value.toFloat() / component.scaleMax.coerceAtLeast(1).toFloat()
-            } else 0f,
             selectorPosition = shownSelectorPosition,
             selectorPositions = component.positionCount,
             pressed = pressed || localPressed,
@@ -449,11 +444,10 @@ private fun LiveComponent(
     }
 }
 
-/** Bottom-sheet-style dialog to force a value onto an output tag for bench testing. */
+/** Bottom-sheet-style dialog to force a lamp's output tag on or off for bench testing. */
 @Composable
 private fun ForceOutputDialog(
     component: PanelComponent,
-    currentValue: Int,
     onDismiss: () -> Unit,
     onForce: (Int) -> Unit,
     onRelease: () -> Unit
@@ -472,46 +466,24 @@ private fun ForceOutputDialog(
                     color = TextMid
                 )
                 Spacer(Modifier.height(14.dp))
-                if (component.kind == ComponentKind.GAUGE) {
-                    var text by remember { mutableStateOf(currentValue.toString()) }
-                    OutlinedTextField(
-                        value = text,
-                        onValueChange = { text = it.filter(Char::isDigit).take(6) },
-                        label = { Text("Forced value") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    Spacer(Modifier.height(14.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        TextButton(onClick = onRelease) { Text("Release", color = TextMid) }
-                        Button(
-                            onClick = { onForce(text.toIntOrNull() ?: 0) },
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = SignalOrange,
-                                contentColor = Ink
-                            )
-                        ) { Text("Force", fontWeight = FontWeight.Bold) }
-                    }
-                } else {
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Button(
-                            onClick = { onForce(1) },
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = SignalOrange,
-                                contentColor = Ink
-                            )
-                        ) { Text("Force ON", fontWeight = FontWeight.Bold) }
-                        Button(
-                            onClick = { onForce(0) },
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = Surface1,
-                                contentColor = TextHi
-                            )
-                        ) { Text("Force OFF") }
-                    }
-                    Spacer(Modifier.height(10.dp))
-                    TextButton(onClick = onRelease) { Text("Release forced value", color = TextMid) }
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Button(
+                        onClick = { onForce(1) },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = SignalOrange,
+                            contentColor = Ink
+                        )
+                    ) { Text("Force ON", fontWeight = FontWeight.Bold) }
+                    Button(
+                        onClick = { onForce(0) },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Surface1,
+                            contentColor = TextHi
+                        )
+                    ) { Text("Force OFF") }
                 }
+                Spacer(Modifier.height(10.dp))
+                TextButton(onClick = onRelease) { Text("Release forced value", color = TextMid) }
             }
         },
         confirmButton = {},

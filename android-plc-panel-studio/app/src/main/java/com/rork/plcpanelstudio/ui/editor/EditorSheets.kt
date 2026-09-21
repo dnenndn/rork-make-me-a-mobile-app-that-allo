@@ -3,7 +3,6 @@ package com.rork.plcpanelstudio.ui.editor
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -56,16 +55,15 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.rork.plcpanelstudio.data.ComponentKind
-import com.rork.plcpanelstudio.data.IoDirection
 import com.rork.plcpanelstudio.data.Panel
 import com.rork.plcpanelstudio.data.PanelComponent
 import com.rork.plcpanelstudio.data.PlcDevice
 import com.rork.plcpanelstudio.data.TagArea
-import com.rork.plcpanelstudio.data.defaultAreaFor
-import com.rork.plcpanelstudio.data.directionFor
+import com.rork.plcpanelstudio.data.fixedAreaFor
+import com.rork.plcpanelstudio.data.fixedDirectionFor
 import com.rork.plcpanelstudio.data.filterTagBody
 import com.rork.plcpanelstudio.data.isValidTagBody
-import com.rork.plcpanelstudio.data.parseTagAddress
+import com.rork.plcpanelstudio.data.tagBodyIgnoringArea
 import com.rork.plcpanelstudio.data.tagAddressOf
 import com.rork.plcpanelstudio.ui.components.CoverTile
 import com.rork.plcpanelstudio.ui.components.HardwareFace
@@ -92,41 +90,26 @@ fun ComponentPropertiesSheet(
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val isSelector = component.kind == ComponentKind.SELECTOR
-    val isGauge = component.kind == ComponentKind.GAUGE
+
+    // Every part has exactly one possible area: buttons and the selector are always inputs,
+    // lamps are always outputs. There is nothing to pick, so this is a plain value, not state.
+    val area = fixedAreaFor(component.kind)
 
     var label by remember(component.id) { mutableStateOf(component.label) }
     var momentary by remember(component.id) { mutableStateOf(component.momentary) }
     var positions by remember(component.id) { mutableIntStateOf(component.positions.coerceIn(2, 3)) }
-    var scaleMax by remember(component.id) { mutableStateOf(component.scaleMax.toString()) }
 
-    // A gauge reads a whole word (e.g. MW20), so it keeps the free-form address field.
-    var wordAddress by remember(component.id) { mutableStateOf(component.tagAddress) }
-    var gaugeDirection by remember(component.id) { mutableStateOf(component.direction) }
-
-    // Bit parts: the area (Input / Output / Memory) is chosen with chips and the user only
-    // types the "byte.bit" part, so the stored address is always I3.4 / Q3.2 / M5.4 shaped.
-    var area by remember(component.id) {
-        mutableStateOf(
-            TagArea.of(component.allAddresses.firstOrNull().orEmpty())
-                ?: defaultAreaFor(component.kind, component.direction)
-        )
-    }
-    var body by remember(component.id) {
-        mutableStateOf(parseTagAddress(component.tagAddress)?.body.orEmpty())
-    }
+    // The "byte.bit" part the user types; the area letter above is fixed and shown as a prefix.
+    var body by remember(component.id) { mutableStateOf(tagBodyIgnoringArea(component.tagAddress)) }
     var positionBodies by remember(component.id) {
-        mutableStateOf(List(3) { parseTagAddress(component.positionAddress(it))?.body.orEmpty() })
+        mutableStateOf(List(3) { tagBodyIgnoringArea(component.positionAddress(it)) })
     }
 
     val bodyInvalid = body.isNotBlank() && !isValidTagBody(body)
     val typedPositions = positionBodies.take(positions).map { it.trim() }.filter { it.isNotBlank() }
     val positionsInvalid = typedPositions.any { !isValidTagBody(it) }
     val hasDuplicateInputs = isSelector && typedPositions.size != typedPositions.toSet().size
-    val canApply = when {
-        isSelector -> !hasDuplicateInputs && !positionsInvalid
-        isGauge -> true
-        else -> !bodyInvalid
-    }
+    val canApply = if (isSelector) !hasDuplicateInputs && !positionsInvalid else !bodyInvalid
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -160,65 +143,22 @@ fun ComponentPropertiesSheet(
                 }
             }
 
-            if (isGauge) {
-                // ---- Gauge: word address, kept free-form -------------------------------
-                Spacer(Modifier.height(18.dp))
-                SectionLabel("Signal direction")
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    IoDirection.entries.forEach { option ->
-                        FilterChip(
-                            selected = gaugeDirection == option,
-                            onClick = { gaugeDirection = option },
-                            label = { Text(option.displayName) },
-                            colors = FilterChipDefaults.filterChipColors(
-                                selectedContainerColor = SignalOrange.copy(alpha = 0.18f),
-                                selectedLabelColor = SignalOrange
-                            )
-                        )
-                    }
-                }
+            // Direction and area are both fixed by what the part is (see fixedAreaFor):
+            // buttons and the selector always write to input I, lamps always mirror output Q.
+            Spacer(Modifier.height(18.dp))
+            Text(
+                text = if (component.kind.isLamp) {
+                    "Output (Q): this part only mirrors what the PLC reports, it never writes to it."
+                } else if (isSelector) {
+                    "Input (I): turning this selector writes to the PLC."
+                } else {
+                    "Input (I): pressing this button writes to the PLC."
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = TextMid
+            )
 
-                Spacer(Modifier.height(16.dp))
-                SectionLabel("Word address")
-                OutlinedTextField(
-                    value = wordAddress,
-                    onValueChange = { wordAddress = it.uppercase() },
-                    placeholder = { Text("e.g. MW20, IW4, QW8") },
-                    singleLine = true,
-                    textStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = MonoFamily),
-                    supportingText = {
-                        Text(
-                            "A gauge reads a whole word, so it is not a byte.bit address.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = TextLow
-                        )
-                    },
-                    trailingIcon = {
-                        if (wordAddress.isNotEmpty()) {
-                            IconButton(onClick = { wordAddress = "" }) {
-                                Icon(Icons.Default.Clear, contentDescription = "Clear address")
-                            }
-                        }
-                    },
-                    keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Characters),
-                    modifier = Modifier.fillMaxWidth()
-                )
-            } else if (!isSelector) {
-                // ---- Buttons and lamps: one bit address --------------------------------
-                Spacer(Modifier.height(18.dp))
-                SectionLabel("Signal type")
-                TagAreaChips(selected = area, onSelect = { area = it })
-                Text(
-                    text = when (area) {
-                        TagArea.INPUT -> "Input (I): a signal coming from the field into the PLC."
-                        TagArea.OUTPUT -> "Output (Q): read-only, the part mirrors the PLC output."
-                        TagArea.MEMORY -> "Memory (M): an internal bit of the PLC program."
-                    },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = TextLow,
-                    modifier = Modifier.padding(top = 6.dp)
-                )
-
+            if (!isSelector) {
                 Spacer(Modifier.height(16.dp))
                 SectionLabel("Tag Address")
                 TagBodyField(
@@ -254,7 +194,7 @@ fun ComponentPropertiesSheet(
             )
 
             when (component.kind) {
-                ComponentKind.BUTTON, ComponentKind.STOP, ComponentKind.GREEN, ComponentKind.YELLOW -> {
+                ComponentKind.STOP, ComponentKind.GREEN, ComponentKind.YELLOW -> {
                     Spacer(Modifier.height(16.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Column(modifier = Modifier.weight(1f)) {
@@ -288,10 +228,6 @@ fun ComponentPropertiesSheet(
                             )
                         }
                     }
-
-                    Spacer(Modifier.height(16.dp))
-                    SectionLabel("Signal type")
-                    TagAreaChips(selected = area, onSelect = { area = it })
 
                     Spacer(Modifier.height(16.dp))
                     SectionLabel("Input for each position")
@@ -353,18 +289,6 @@ fun ComponentPropertiesSheet(
                         )
                     }
                 }
-                ComponentKind.GAUGE -> {
-                    Spacer(Modifier.height(16.dp))
-                    SectionLabel("Full scale value")
-                    OutlinedTextField(
-                        value = scaleMax,
-                        onValueChange = { scaleMax = it.filter(Char::isDigit).take(6) },
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        textStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = MonoFamily),
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
                 ComponentKind.LAMP, ComponentKind.LAMP_RED, ComponentKind.LAMP_GREEN -> Unit
             }
 
@@ -382,22 +306,16 @@ fun ComponentPropertiesSheet(
                             component.copy(
                                 label = label.ifBlank { component.kind.displayName },
                                 tagAddress = when {
-                                    isGauge -> wordAddress.trim().uppercase()
                                     isSelector && typedPositions.isNotEmpty() -> ""
                                     isSelector -> component.tagAddress
                                     else -> tagAddressOf(area, body)
                                 },
-                                direction = when {
-                                    isGauge -> gaugeDirection
-                                    isSelector -> IoDirection.INPUT
-                                    else -> directionFor(component.kind, area)
-                                },
+                                direction = fixedDirectionFor(component.kind),
                                 momentary = momentary,
                                 positions = positions,
                                 positionTags = if (isSelector && typedPositions.isNotEmpty()) {
                                     positionBodies.take(positions).map { tagAddressOf(area, it) }
-                                } else emptyList(),
-                                scaleMax = scaleMax.toIntOrNull()?.coerceAtLeast(1) ?: 100
+                                } else emptyList()
                             )
                         )
                     },
@@ -415,31 +333,10 @@ fun ComponentPropertiesSheet(
     }
 }
 
-/** Input / Output / Memory picker; the choice decides the letter in front of the address. */
-@Composable
-private fun TagAreaChips(selected: TagArea, onSelect: (TagArea) -> Unit) {
-    Row(
-        modifier = Modifier.horizontalScroll(rememberScrollState()),
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        TagArea.entries.forEach { option ->
-            FilterChip(
-                selected = selected == option,
-                onClick = { onSelect(option) },
-                label = { Text("${option.displayName} (${option.prefix})") },
-                colors = FilterChipDefaults.filterChipColors(
-                    selectedContainerColor = SignalOrange.copy(alpha = 0.18f),
-                    selectedLabelColor = SignalOrange
-                )
-            )
-        }
-    }
-}
-
 /**
- * Field for the "byte.bit" part of an address. The area letter is shown as a fixed prefix and
- * the typed text is filtered down to digits and a single dot, so the result can only ever be
- * something like 3.4 — giving I3.4, Q3.2 or M5.4 once the area is put in front.
+ * Field for the "byte.bit" part of an address. The area letter is fixed by the part's kind and
+ * shown as a prefix; the typed text is filtered down to digits and a single dot, so the result
+ * can only ever be something like 3.4 — giving I3.4, Q3.2 or M5.4 once the area is put in front.
  */
 @Composable
 private fun TagBodyField(

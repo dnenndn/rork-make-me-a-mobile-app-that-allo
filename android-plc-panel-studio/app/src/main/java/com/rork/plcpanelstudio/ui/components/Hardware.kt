@@ -83,12 +83,10 @@ import kotlinx.coroutines.launch
 
 /** Colour a component lights with when its signal is live. */
 fun glowColorFor(kind: ComponentKind): Color = when (kind) {
-    ComponentKind.BUTTON -> SignalOrange
     ComponentKind.SELECTOR -> SignalOrange
     ComponentKind.LAMP -> SignalAmber
     ComponentKind.LAMP_RED -> SignalRed
     ComponentKind.LAMP_GREEN -> SignalGreen
-    ComponentKind.GAUGE -> SignalOrange
     ComponentKind.STOP -> SignalRed
     ComponentKind.GREEN -> SignalGreen
     ComponentKind.YELLOW -> SignalYellow
@@ -100,18 +98,18 @@ private val ScrewSlot = Color(0xFF10151A)
 /**
  * Renders a miniature panel-mount industrial part: a square metal faceplate with
  * corner screws and the hardware mounted in the middle. [active] drives the glow,
- * [analogValue] (0f..1f) drives the gauge needle, [selectorPosition] drives the knob.
+ * [selectorPosition] drives the knob. Every [ComponentKind] is one of a plate button,
+ * a lamp or the selector, each drawn by its own face below.
  */
 @Composable
 fun HardwareFace(
     kind: ComponentKind,
     active: Boolean,
     modifier: Modifier = Modifier,
-    analogValue: Float = 0f,
     selectorPosition: Int = 0,
     selectorPositions: Int = 2,
     pressed: Boolean = false,
-    /** Text engraved on the plate of image-based parts; ignored by the canvas-drawn parts. */
+    /** Text engraved on the plate of image-based parts. */
     label: String = "",
     /** Selector only: called with the new position when the knob is turned. Null = display only. */
     onSelectorChange: ((Int) -> Unit)? = null
@@ -124,44 +122,14 @@ fun HardwareFace(
         LampFace(kind = kind, active = active, label = label, modifier = modifier)
         return
     }
-    if (kind == ComponentKind.SELECTOR) {
-        SelectorFace(
-            active = active,
-            position = selectorPosition,
-            positions = selectorPositions,
-            label = label,
-            onSelect = onSelectorChange,
-            modifier = modifier
-        )
-        return
-    }
-
-    val glow = glowColorFor(kind)
-    val intensity by animateFloatAsState(
-        targetValue = if (active) 1f else 0f,
-        animationSpec = tween(durationMillis = 180),
-        label = "glow"
+    SelectorFace(
+        active = active,
+        position = selectorPosition,
+        positions = selectorPositions,
+        label = label,
+        onSelect = onSelectorChange,
+        modifier = modifier
     )
-    val press by animateFloatAsState(
-        targetValue = if (pressed) 1f else 0f,
-        animationSpec = tween(durationMillis = 90),
-        label = "press"
-    )
-    val needle by animateFloatAsState(
-        targetValue = analogValue.coerceIn(0f, 1f),
-        animationSpec = tween(durationMillis = 420),
-        label = "needle"
-    )
-
-    Canvas(modifier = modifier) {
-        when (kind) {
-            ComponentKind.BUTTON -> drawPushButton(glow, intensity, press)
-            ComponentKind.LAMP, ComponentKind.LAMP_RED, ComponentKind.LAMP_GREEN -> Unit // drawn by LampFace above
-            ComponentKind.SELECTOR -> Unit // drawn by SelectorFace above
-            ComponentKind.GAUGE -> drawGauge(glow, intensity, needle)
-            ComponentKind.STOP, ComponentKind.GREEN, ComponentKind.YELLOW -> Unit // drawn by PlateButtonFace above
-        }
-    }
 }
 
 // ---------------------------------------------------------------- stop button (image based)
@@ -603,330 +571,6 @@ private fun SelectorFace(
     }
 }
 
-// ---------------------------------------------------------------- module plate
-
-/** Draws the square brushed-metal faceplate with corner screws; returns its centre. */
-private fun DrawScope.drawModulePlate(): Offset {
-    val s = size.minDimension
-    val inset = s * 0.02f
-    val plateSize = Size(s - inset * 2f, s - inset * 2f)
-
-    // Soft ambient shadow so the plate sits proud of the panel.
-    drawRoundRect(
-        color = Color.Black.copy(alpha = 0.5f),
-        topLeft = Offset(inset + s * 0.015f, inset + s * 0.025f),
-        size = plateSize,
-        cornerRadius = androidx.compose.ui.geometry.CornerRadius(s * 0.13f)
-    )
-    // Brushed metal plate.
-    drawRoundRect(
-        brush = Brush.verticalGradient(
-            colors = listOf(SteelLight, Steel, SteelDark),
-            startY = inset,
-            endY = inset + plateSize.height
-        ),
-        topLeft = Offset(inset, inset),
-        size = plateSize,
-        cornerRadius = androidx.compose.ui.geometry.CornerRadius(s * 0.13f)
-    )
-    // Bright top bevel + dark bottom bevel.
-    drawRoundRect(
-        brush = Brush.verticalGradient(
-            colors = listOf(Color.White.copy(alpha = 0.28f), Color.Transparent),
-            startY = inset,
-            endY = inset + plateSize.height * 0.3f
-        ),
-        topLeft = Offset(inset, inset),
-        size = plateSize,
-        cornerRadius = androidx.compose.ui.geometry.CornerRadius(s * 0.13f)
-    )
-    drawRoundRect(
-        color = Color.Black.copy(alpha = 0.35f),
-        topLeft = Offset(inset, inset),
-        size = plateSize,
-        cornerRadius = androidx.compose.ui.geometry.CornerRadius(s * 0.13f),
-        style = Stroke(width = s * 0.012f)
-    )
-    // Recessed mounting well behind the hardware.
-    val wellInset = s * 0.14f
-    drawRoundRect(
-        brush = Brush.verticalGradient(
-            colors = listOf(Color(0xFF12181D), Color(0xFF1A2126)),
-            startY = wellInset,
-            endY = s - wellInset
-        ),
-        topLeft = Offset(wellInset, wellInset),
-        size = Size(s - wellInset * 2f, s - wellInset * 2f),
-        cornerRadius = androidx.compose.ui.geometry.CornerRadius(s * 0.07f)
-    )
-    drawRoundRect(
-        brush = Brush.verticalGradient(
-            colors = listOf(Color.Black.copy(alpha = 0.55f), Color.Transparent),
-            startY = wellInset,
-            endY = wellInset + s * 0.08f
-        ),
-        topLeft = Offset(wellInset, wellInset),
-        size = Size(s - wellInset * 2f, s * 0.1f),
-        cornerRadius = androidx.compose.ui.geometry.CornerRadius(s * 0.05f)
-    )
-
-    val screwOffset = s * 0.075f
-    val screwRadius = s * 0.038f
-    drawScrew(Offset(screwOffset, screwOffset), screwRadius)
-    drawScrew(Offset(s - screwOffset, screwOffset), screwRadius)
-    drawScrew(Offset(screwOffset, s - screwOffset), screwRadius)
-    drawScrew(Offset(s - screwOffset, s - screwOffset), screwRadius)
-
-    return Offset(s / 2f, s / 2f)
-}
-
-/** Hex-head panel screw with a slotted drive. */
-private fun DrawScope.drawScrew(center: Offset, radius: Float) {
-    drawCircle(
-        brush = Brush.radialGradient(
-            colors = listOf(SteelLight, SteelDark),
-            center = center,
-            radius = radius
-        ),
-        radius = radius,
-        center = center
-    )
-    drawCircle(
-        color = ScrewSlot,
-        radius = radius * 0.62f,
-        center = center
-    )
-    drawLine(
-        color = SteelLight.copy(alpha = 0.8f),
-        start = Offset(center.x - radius * 0.42f, center.y - radius * 0.42f),
-        end = Offset(center.x + radius * 0.42f, center.y + radius * 0.42f),
-        strokeWidth = radius * 0.3f,
-        cap = StrokeCap.Round
-    )
-    drawCircle(
-        color = Color.White.copy(alpha = 0.22f),
-        radius = radius,
-        center = center,
-        style = Stroke(width = radius * 0.18f)
-    )
-}
-
-/** Glow halo spilling past the module when the signal is live. */
-private fun DrawScope.drawHalo(center: Offset, glow: Color, intensity: Float, reach: Float) {
-    if (intensity <= 0.02f) return
-    val s = size.minDimension
-    drawCircle(
-        brush = Brush.radialGradient(
-            colors = listOf(
-                glow.copy(alpha = 0.5f * intensity),
-                glow.copy(alpha = 0.14f * intensity),
-                Color.Transparent
-            ),
-            center = center,
-            radius = s * reach
-        ),
-        radius = s * reach,
-        center = center
-    )
-}
-
-/** Knurled metal collar that grips the cap or lens. */
-private fun DrawScope.drawCollar(center: Offset, radius: Float, intensity: Float, glow: Color) {
-    drawCircle(
-        brush = Brush.verticalGradient(
-            colors = listOf(SteelLight, SteelDark),
-            startY = center.y - radius,
-            endY = center.y + radius
-        ),
-        radius = radius,
-        center = center
-    )
-    // Knurl ticks around the circumference.
-    val ticks = 24
-    for (index in 0 until ticks) {
-        val angle = (index * 360f / ticks) * (Math.PI / 180.0)
-        val cosA = cos(angle).toFloat()
-        val sinA = sin(angle).toFloat()
-        drawLine(
-            color = Color.Black.copy(alpha = 0.4f),
-            start = Offset(center.x + radius * 0.86f * cosA, center.y + radius * 0.86f * sinA),
-            end = Offset(center.x + radius * 0.97f * cosA, center.y + radius * 0.97f * sinA),
-            strokeWidth = radius * 0.055f
-        )
-    }
-    drawCircle(
-        color = Color.Black.copy(alpha = 0.45f),
-        radius = radius * 0.8f,
-        center = center
-    )
-    if (intensity > 0.02f) {
-        drawCircle(
-            brush = Brush.radialGradient(
-                colors = listOf(glow.copy(alpha = 0.35f * intensity), Color.Transparent),
-                center = center,
-                radius = radius
-            ),
-            radius = radius * 0.8f,
-            center = center
-        )
-    }
-}
-
-// ---------------------------------------------------------------- parts
-
-private fun DrawScope.drawPushButton(glow: Color, intensity: Float, press: Float) {
-    val center = drawModulePlate()
-    drawHalo(center, glow, intensity, 0.62f)
-    val s = size.minDimension
-
-    drawCollar(center, s * 0.37f, intensity, glow)
-
-    val capRadius = s * (0.28f - 0.02f * press)
-    // Cap shadow inside the collar well.
-    drawCircle(
-        color = Color.Black.copy(alpha = 0.5f),
-        radius = capRadius * 1.08f,
-        center = Offset(center.x, center.y + s * 0.008f)
-    )
-    // Chunky cap: lit to signal colour when active, brushed steel when idle.
-    val capTop = lerpColor(Color(0xFF5A646D), glow, intensity)
-    val capBottom = lerpColor(Color(0xFF2A3238), glow.copy(alpha = 0.65f), intensity)
-    drawCircle(
-        brush = Brush.verticalGradient(
-            colors = listOf(capTop, capBottom),
-            startY = center.y - capRadius,
-            endY = center.y + capRadius
-        ),
-        radius = capRadius,
-        center = center
-    )
-    // Hot core when active.
-    if (intensity > 0.02f) {
-        drawCircle(
-            brush = Brush.radialGradient(
-                colors = listOf(
-                    Color.White.copy(alpha = 0.55f * intensity),
-                    glow.copy(alpha = 0.5f * intensity),
-                    Color.Transparent
-                ),
-                center = Offset(center.x, center.y - capRadius * 0.1f),
-                radius = capRadius
-            ),
-            radius = capRadius,
-            center = center
-        )
-    }
-    // Specular highlight arc.
-    drawCircle(
-        brush = Brush.radialGradient(
-            colors = listOf(
-                Color.White.copy(alpha = 0.34f - 0.12f * press),
-                Color.Transparent
-            ),
-            center = Offset(center.x - capRadius * 0.32f, center.y - capRadius * 0.4f),
-            radius = capRadius * 0.75f
-        ),
-        radius = capRadius * 0.75f,
-        center = Offset(center.x - capRadius * 0.32f, center.y - capRadius * 0.4f)
-    )
-    drawCircle(
-        color = Color.Black.copy(alpha = 0.4f),
-        radius = capRadius,
-        center = center,
-        style = Stroke(width = s * 0.012f)
-    )
-}
-
-private fun DrawScope.drawGauge(glow: Color, intensity: Float, value: Float) {
-    val center = drawModulePlate()
-    drawHalo(center, glow, intensity, 0.6f)
-    val s = size.minDimension
-
-    drawCollar(center, s * 0.37f, intensity, glow)
-
-    // Black instrument dial.
-    val dialRadius = s * 0.3f
-    drawCircle(color = DialBlack, radius = dialRadius, center = center)
-    drawCircle(
-        brush = Brush.radialGradient(
-            colors = listOf(Color.White.copy(alpha = 0.05f), Color.Transparent),
-            center = Offset(center.x, center.y - dialRadius * 0.4f),
-            radius = dialRadius
-        ),
-        radius = dialRadius,
-        center = center
-    )
-
-    val arcRadius = dialRadius * 0.78f
-    val startAngle = 150f
-    val sweep = 240f
-    val arcTopLeft = Offset(center.x - arcRadius, center.y - arcRadius)
-    val arcSize = Size(arcRadius * 2f, arcRadius * 2f)
-
-    // Track + live sweep.
-    drawArc(
-        color = Color(0xFF2A3238),
-        startAngle = startAngle,
-        sweepAngle = sweep,
-        useCenter = false,
-        topLeft = arcTopLeft,
-        size = arcSize,
-        style = Stroke(width = s * 0.022f, cap = StrokeCap.Butt)
-    )
-    if (value > 0f) {
-        drawArc(
-            color = glow.copy(alpha = 0.4f + 0.6f * intensity),
-            startAngle = startAngle,
-            sweepAngle = sweep * value,
-            useCenter = false,
-            topLeft = arcTopLeft,
-            size = arcSize,
-            style = Stroke(width = s * 0.022f, cap = StrokeCap.Round)
-        )
-    }
-
-    // Tick marks.
-    val tickCount = 9
-    for (index in 0 until tickCount) {
-        val angleDeg = startAngle + sweep * index / (tickCount - 1)
-        val rad = Math.toRadians(angleDeg.toDouble())
-        val cosA = cos(rad).toFloat()
-        val sinA = sin(rad).toFloat()
-        val isMajor = index % 2 == 0
-        drawLine(
-            color = Color(0xFFB8C2CA).copy(alpha = if (isMajor) 0.9f else 0.5f),
-            start = Offset(center.x + arcRadius * (if (isMajor) 0.82f else 0.88f) * cosA, center.y + arcRadius * (if (isMajor) 0.82f else 0.88f) * sinA),
-            end = Offset(center.x + arcRadius * 0.97f * cosA, center.y + arcRadius * 0.97f * sinA),
-            strokeWidth = s * if (isMajor) 0.014f else 0.008f
-        )
-    }
-
-    // Needle.
-    val needleRad = Math.toRadians((startAngle + sweep * value).toDouble())
-    drawLine(
-        color = Color(0xFFE8EEF2),
-        start = Offset(center.x - arcRadius * 0.12f * cos(needleRad).toFloat(), center.y - arcRadius * 0.12f * sin(needleRad).toFloat()),
-        end = Offset(
-            center.x + arcRadius * 0.72f * cos(needleRad).toFloat(),
-            center.y + arcRadius * 0.72f * sin(needleRad).toFloat()
-        ),
-        strokeWidth = s * 0.016f,
-        cap = StrokeCap.Round
-    )
-    drawCircle(color = SteelLight, radius = s * 0.036f, center = center)
-    drawCircle(color = SteelDark, radius = s * 0.018f, center = center)
-}
-
-private fun lerpColor(from: Color, to: Color, t: Float): Color {
-    val clamped = t.coerceIn(0f, 1f)
-    return Color(
-        red = from.red + (to.red - from.red) * clamped,
-        green = from.green + (to.green - from.green) * clamped,
-        blue = from.blue + (to.blue - from.blue) * clamped,
-        alpha = from.alpha + (to.alpha - from.alpha) * clamped
-    )
-}
-
 /** Engraved nameplate strip used above hardware faces. */
 @Composable
 fun Nameplate(
@@ -1000,7 +644,6 @@ fun HardwareUnit(
     caption: String,
     active: Boolean,
     modifier: Modifier = Modifier,
-    analogValue: Float = 0f,
     selectorPosition: Int = 0,
     selectorPositions: Int = 2,
     pressed: Boolean = false,
@@ -1032,7 +675,6 @@ fun HardwareUnit(
             HardwareFace(
                 kind = kind,
                 active = active,
-                analogValue = analogValue,
                 selectorPosition = selectorPosition,
                 selectorPositions = selectorPositions,
                 pressed = pressed,

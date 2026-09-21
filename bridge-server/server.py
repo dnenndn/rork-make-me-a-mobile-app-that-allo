@@ -1,5 +1,3 @@
-
-
 import argparse
 import json
 import math
@@ -270,16 +268,18 @@ def _lan_addresses():
 
 class BridgeHandler(BaseHTTPRequestHandler):
 
-    def _send_json(self, status, payload):
-        body = json.dumps(payload).encode("utf-8")
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(body)))
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+    def _send_json(self, status_code, payload):
+        body = json.dumps(payload).encode('utf-8')
+        self.send_response(status_code)
+        self.send_header('Content-Type', 'application/json')
+        self.send_header('Content-Length', str(len(body)))
+        # Force le client mobile à ne pas réutiliser un socket corrompu
+        self.send_header('Connection', 'close') 
         self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.wfile.write(body)
+        except Exception as e:
+            print(f"[HTTP ERROR] Échec d'envoi de la réponse au client: {e}")
 
     def do_OPTIONS(self):
         self._send_json(204, {})
@@ -320,6 +320,15 @@ class BridgeHandler(BaseHTTPRequestHandler):
             self._send_json(400, {"ok": False, "error": str(error)})
         except Exception as error:
             self._send_json(503, {"ok": False, "error": str(error)})
+
+    def address_string(self):
+        # The default implementation does a reverse DNS lookup on every request before
+        # logging it, which blocks the response until that lookup finishes. Addresses in
+        # Tailscale's range have no reverse DNS record anywhere, so that lookup can hang for
+        # a long time (sometimes indefinitely) on a real network, making every request from
+        # a Tailscale peer look like it has frozen even though the server is just stuck
+        # waiting on DNS. Logging the raw IP instead avoids the lookup entirely.
+        return self.client_address[0]
 
     def log_message(self, fmt, *args):
         print(f"{self.address_string()} - {fmt % args}")

@@ -88,8 +88,9 @@ import kotlinx.coroutines.delay
 import kotlin.math.hypot
 import kotlin.math.roundToInt
 
-// The old canvas-drawn Button and Gauge are no longer offered in the library. They stay in the
-// ComponentKind enum so panels that already contain them keep working.
+// Every part a panel can be built from: a selector, three lamp colours and three button
+// colours. Buttons and the selector are always inputs, lamps are always outputs (see
+// fixedAreaFor) — there is no generic "Button" or "Gauge" part any more.
 private val PALETTE_KINDS = listOf(
     ComponentKind.SELECTOR,
     ComponentKind.LAMP,
@@ -374,7 +375,7 @@ fun EditorScreen(
     if (showProperties && selected != null) {
         ComponentPropertiesSheet(
             component = selected,
-            suggestAddress = { direction, exclude -> viewModel.suggestAddress(direction, exclude) },
+            suggestAddress = { area, exclude -> viewModel.suggestAddress(area, exclude) },
             onDismiss = { showProperties = false },
             onApply = { updated ->
                 viewModel.updateComponent(updated)

@@ -31,21 +31,21 @@ object SeedData {
             components = listOf(
                 PanelComponent(
                     id = "c1",
-                    kind = ComponentKind.BUTTON,
+                    kind = ComponentKind.GREEN,
                     col = 0.16f,
                     row = 0.2f,
                     label = "Start",
-                    tagAddress = "M0.3",
+                    tagAddress = "I0.3",
                     direction = IoDirection.INPUT,
                     momentary = true
                 ),
                 PanelComponent(
                     id = "c2",
-                    kind = ComponentKind.BUTTON,
+                    kind = ComponentKind.STOP,
                     col = 0.5f,
                     row = 0.2f,
                     label = "Stop",
-                    tagAddress = "M0.4",
+                    tagAddress = "I0.4",
                     direction = IoDirection.INPUT,
                     momentary = true
                 ),
@@ -64,7 +64,7 @@ object SeedData {
                     col = 0.16f,
                     row = 0.6f,
                     label = "Mode Select",
-                    tagAddress = "M1.0",
+                    tagAddress = "I1.0",
                     direction = IoDirection.INPUT,
                     positions = 2
                 ),
@@ -76,16 +76,6 @@ object SeedData {
                     label = "Conveyor",
                     tagAddress = "Q0.2",
                     direction = IoDirection.OUTPUT
-                ),
-                PanelComponent(
-                    id = "c6",
-                    kind = ComponentKind.GAUGE,
-                    col = 0.84f,
-                    row = 0.6f,
-                    label = "Line Speed",
-                    tagAddress = "MW20",
-                    direction = IoDirection.OUTPUT,
-                    scaleMax = 100
                 )
             )
         )
@@ -99,7 +89,7 @@ object SeedData {
             components = listOf(
                 PanelComponent(
                     id = "p1",
-                    kind = ComponentKind.BUTTON,
+                    kind = ComponentKind.GREEN,
                     col = 0.2f,
                     row = 0.3f,
                     label = "Cycle Start",
@@ -114,16 +104,6 @@ object SeedData {
                     label = "Sealer Heat",
                     tagAddress = "Q1.0",
                     direction = IoDirection.OUTPUT
-                ),
-                PanelComponent(
-                    id = "p3",
-                    kind = ComponentKind.GAUGE,
-                    col = 0.8f,
-                    row = 0.3f,
-                    label = "Throughput",
-                    tagAddress = "MW10",
-                    direction = IoDirection.OUTPUT,
-                    scaleMax = 100
                 )
             )
         )

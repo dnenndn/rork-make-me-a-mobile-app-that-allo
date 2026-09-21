@@ -1,0 +1,81 @@
+PS C:\> New-NetFirewallRule -DisplayName "Mon API Tailscale" -Direction Inbound -LocalPort 8080 -Protocol TCP -Action Allow
+
+
+Name                          : {d86d84ca-a653-44d5-888f-c2f69d040993}
+DisplayName                   : Mon API Tailscale
+Description                   :
+DisplayGroup                  :
+Group                         :
+Enabled                       : True
+Profile                       : Any
+Platform                      : {}
+Direction                     : Inbound
+Action                        : Allow
+EdgeTraversalPolicy           : Block
+LooseSourceMapping            : False
+LocalOnlyMapping              : False
+Owner                         :
+PrimaryStatus                 : OK
+Status                        : La règle a été analysée à partir de la banque. (65536)
+EnforcementStatus             : NotApplicable
+PolicyStoreSource             : PersistentStore
+PolicyStoreSourceType         : Local
+RemoteDynamicKeywordAddresses : {}
+PolicyAppId                   :
+PackageFamilyName             :
+
+
+
+PS C:\> tailscale set --shields-up=false
+
+
+1.Vérifier la connexion au serveur de contrôle :1 min.Ouvrez PowerShell en tant qu'administrateur et exécutez :tailscale netcheckVérification : Assurez-vous que la ligne Report: indique DERP latency et qu'aucune interdiction HTTPS/Control n'est bloquée.2.Désactiver l'expiration de la clé de la machine (Key Expiry) :1 min.Si la clé réseau a expiré, Tailscale bloque le statut dans l'interface web tout en laissant passer les paquets existants.Rendez-vous sur la console Tailscale Admin ([login.tailscale.com/admin/machines](https://login.tailscale.com/admin/machines)).Cliquez sur les trois petits points (...) à côté de votre machine Windows.Sélectionnez Disable key expiry.Vérification : Rafraîchissez la page pour voir si l'appareil repasse en Connected.3.Purger le cache et réenregistrer la machine :2 min.Si le statut de l'application reste bloqué localement :Dans PowerShell (Administrateur), coupez et relancez le client :tailscale downtailscale up --resetSi le problème persiste, supprimez l'appareil directement depuis la console web Admin Tailscale (Option Delete...).Relancez la commande tailscale up sur Windows pour recréer proprement le nœud.
+
+
+
+
+PS C:\> tailscale netcheck
+2026/09/21 17:53:47 portmap: monitor: gateway and self IP changed: gw=192.168.1.1 self=192.168.1.129
+
+Report:
+        * Time: 2026-09-21 17:53:48.5294521+01:00
+        * UDP: true
+        * IPv4: yes, 102.155.193.120:54586
+        * IPv6: no, but OS has support
+        * MappingVariesByDestIP: false
+        * PortMapping:
+        * CaptivePortal: false
+        * Nearest DERP: Amsterdam
+        * DERP latency:
+                - par: 81.3ms  (Paris)
+                - ams: 81.3ms  (Amsterdam)
+                - fra: 81.8ms  (Frankfurt)
+                - nue: 84.4ms  (Nuremberg)
+                - lhr: 84.5ms  (London)
+                - mad: 85.2ms  (Madrid)
+                - waw: 89.8ms  (Warsaw)
+                - hel: 90.2ms  (Helsinki)
+                - nyc: 141.7ms (New York City)
+                - iad: 143.1ms (Ashburn)
+                - tor: 156.3ms (Toronto)
+                - ord: 164.4ms (Chicago)
+                - dbi: 174.5ms (Dubai)
+                - dfw: 181.8ms (Dallas)
+                - mia: 186.3ms (Miami)
+                - blr: 188.5ms (Bengaluru)
+                - sin: 189.3ms (Singapore)
+                - den: 192.1ms (Denver)
+                - lax: 194ms   (Los Angeles)
+                - sea: 194.8ms (Seattle)
+                - sfo: 200.3ms (San Francisco)
+                - nai: 202.3ms (Nairobi)
+                - jnb: 242.9ms (Johannesburg)
+                - hkg: 246.3ms (Hong Kong)
+                - hnl: 251ms   (Honolulu)
+                - tok: 282.2ms (Tokyo)
+                - sao: 292.7ms (São Paulo)
+                - syd: 323.2ms (Sydney)
+PS C:\> tailscale down
+PS C:\> tailscale up --reset
+PS C:\>
+

@@ -5,37 +5,33 @@ import kotlinx.serialization.Serializable
 /** The kind of industrial part placed on a panel. */
 @Serializable
 enum class ComponentKind {
-    BUTTON,
     SELECTOR,
     LAMP,
-    GAUGE,
     /** Red image-based lamp (same housing as [LAMP]). */
     LAMP_RED,
     /** Green image-based lamp (same housing as [LAMP]). */
     LAMP_GREEN,
-    /** Red emergency-style push button (image-based). Behaves like a [BUTTON]. */
+    /** Red emergency-style push button (image-based). */
     STOP,
-    /** Green push button in the same housing as [STOP]. Behaves like a [BUTTON]. */
+    /** Green push button in the same housing as [STOP]. */
     GREEN,
-    /** Yellow push button in the same housing as [STOP]. Behaves like a [BUTTON]. */
+    /** Yellow push button in the same housing as [STOP]. */
     YELLOW;
 
     val displayName: String
         get() = when (this) {
-            BUTTON -> "Button"
             SELECTOR -> "Selector"
             LAMP -> "Yellow Lamp"
             LAMP_RED -> "Red Lamp"
             LAMP_GREEN -> "Green Lamp"
-            GAUGE -> "Gauge"
             STOP -> "Red Button"
             GREEN -> "Green Button"
             YELLOW -> "Yellow Button"
         }
 
-    /** True for parts that are pressed like a push button (BUTTON and STOP). */
+    /** True for the three push buttons: Stop (red), Green and Yellow. */
     val isPushButton: Boolean
-        get() = this == BUTTON || this == STOP || this == GREEN || this == YELLOW
+        get() = this == STOP || this == GREEN || this == YELLOW
 
     /** True for the image-based buttons that carry a user label on their own plate. */
     val isPlateButton: Boolean
@@ -49,12 +45,12 @@ enum class ComponentKind {
     val hasPlateLabel: Boolean
         get() = isPlateButton || isLamp || this == SELECTOR
 
-    /** Selectors and buttons drive PLC inputs, lamps and gauges display outputs. */
+    /**
+     * Buttons and selectors always write to the PLC; lamps always only display it. This is
+     * fixed by what the part is, not a choice the user makes (see [com.rork.plcpanelstudio.data.fixedDirectionFor]).
+     */
     val defaultDirection: IoDirection
-        get() = when (this) {
-            BUTTON, STOP, GREEN, YELLOW, SELECTOR -> IoDirection.INPUT
-            LAMP, LAMP_RED, LAMP_GREEN, GAUGE -> IoDirection.OUTPUT
-        }
+        get() = if (isLamp) IoDirection.OUTPUT else IoDirection.INPUT
 }
 
 /** Whether a tag is written by the panel (input) or only read back (output). */
@@ -80,8 +76,6 @@ data class PanelComponent(
     val direction: IoDirection,
     /** Number of stable positions for a selector switch (2 or 3). */
     val positions: Int = 2,
-    /** Full-scale value used to render a gauge. */
-    val scaleMax: Int = 100,
     /** A momentary button returns to 0 on release; a maintained one latches. */
     val momentary: Boolean = true,
     /**
